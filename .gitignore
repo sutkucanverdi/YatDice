@@ -1,0 +1,54 @@
+# Ortam Değişkenleri ve Gizli Anahtarlar (ASLA PUSH EDİLMEMELİ)
+.env
+.env.*
+!.env.example
+yat-dice/.env
+yat-dice/.env.*
+yat-dice-backend/.env
+yat-dice-backend/.env.*
+
+# Node / Frontend Bağımlılıkları ve Derleme Çıktıları
+node_modules/
+yat-dice/node_modules/
+dist/
+yat-dice/dist/
+yat-dice/dist-ssr/
+*.local
+
+# Go Derlenmiş Binary ve Test Dosyaları
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+yat-dice-backend/yat-dice-backend
+yat-dice-backend/main
+
+# Veritabanı Yerel Veri Klasörleri ve Yedekler
+pgdata/
+*.sql.gz
+*.dump
+*.db
+*.sqlite
+
+# Loglar ve Geçici Dosyalar
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editör / IDE ve İşletim Sistemi Dosyaları
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

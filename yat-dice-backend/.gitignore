@@ -1,0 +1,14 @@
+# Go Derlenmiş Dosyalar ve Gizli Anahtarlar
+.env
+.env.*
+!.env.example
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+yat-dice-backend
+main
+*.log

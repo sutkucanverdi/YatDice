@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: yatzy_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yatzy_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yatzy_password}
+      POSTGRES_DB: ${POSTGRES_DB:-yatzy_gamedb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
