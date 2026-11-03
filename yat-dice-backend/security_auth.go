@@ -518,3 +518,46 @@ func handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Şifreniz başarıyla güncellendi! Şimdi giriş yapabilirsiniz."})
 }
+
+// ─── 5. ARKADAŞ ÇEVRİMİÇİ (ONLINE / OYUNDA) DURUM TAKİBİ ─────────────────────
+
+var (
+	presenceMu   sync.Mutex
+	userLastSeen = make(map[int]time.Time)
+	userInGame   = make(map[int]int) // userID -> aktif oda sayısı
+)
+
+func touchUserPresence(userID int) {
+	if userID <= 0 {
+		return
+	}
+	presenceMu.Lock()
+	userLastSeen[userID] = time.Now()
+	presenceMu.Unlock()
+}
+
+func setUserGameState(userID int, inGame bool) {
+	if userID <= 0 {
+		return
+	}
+	presenceMu.Lock()
+	userLastSeen[userID] = time.Now()
+	if inGame {
+		userInGame[userID]++
+	} else if userInGame[userID] > 0 {
+		userInGame[userID]--
+	}
+	presenceMu.Unlock()
+}
+
+func getUserOnlineState(userID int) (online bool, inGame bool) {
+	if userID <= 0 {
+		return false, false
+	}
+	presenceMu.Lock()
+	defer presenceMu.Unlock()
+	activeGames := userInGame[userID] > 0
+	seenRecently := time.Since(userLastSeen[userID]) < 18*time.Second
+	return activeGames || seenRecently, activeGames
+}
+

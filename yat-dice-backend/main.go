@@ -335,6 +335,12 @@ func awardMatchResultDB(userID int, won bool, score int, xpGain int, tokenGain i
 }
 
 func newRoom(id string, p1, p2 *Client) *Room {
+	if p1 != nil {
+		setUserGameState(p1.UserID, true)
+	}
+	if p2 != nil {
+		setUserGameState(p2.UserID, true)
+	}
 	r := &Room{
 		ID:        id,
 		Player1:   p1,
@@ -780,6 +786,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		room := client.Room
 		client.Room = nil
 		mu.Unlock()
+		if room != nil {
+			setUserGameState(client.UserID, false)
+		}
 
 		// Oyuncu aktif ve bitmemiş bir oyundayken çıkarsa rakibine Hükmen Galibiyet ver
 		if room != nil {
@@ -1097,6 +1106,8 @@ func createTables() {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) DEFAULT '';`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_device_id VARCHAR(128) DEFAULT '';`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT FALSE;`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT '';`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS country VARCHAR(10) DEFAULT 'TR';`,
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -1212,6 +1223,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 type ProfileData struct {
 	Username        string   `json:"username"`
+	Avatar          string   `json:"avatar"`
+	Country         string   `json:"country"`
 	XP              int      `json:"xp"`
 	Tokens          int      `json:"tokens"`
 	Cases           int      `json:"cases"`
@@ -1235,6 +1248,9 @@ func parseTokenString(tokenString string) (string, error) {
 	if err != nil || !token.Valid {
 		return "", fmt.Errorf("geçersiz token")
 	}
+	if uid, err := strconv.Atoi(claims.Subject); err == nil {
+		touchUserPresence(uid)
+	}
 	return claims.Subject, nil
 }
 
@@ -1251,14 +1267,16 @@ func fetchProfileByUserID(userID string) (ProfileData, error) {
 	var p ProfileData
 	var unlockedStr string
 	err := db.QueryRow(`
-		SELECT u.username, p.xp, p.tokens, p.cases, p.wins, p.games_played, p.high_score,
+		SELECT u.username, COALESCE(p.avatar, ''), COALESCE(p.country, 'TR'),
+		       p.xp, p.tokens, p.cases, p.wins, p.games_played, p.high_score,
 		       COALESCE(p.unlocked_dice, 'ivory'), COALESCE(p.selected_dice, 'ivory'),
 		       COALESCE(p.login_streak, 0), COALESCE(p.last_daily_reward, '')
 		FROM profiles p
 		JOIN users u ON u.id = p.user_id
 		WHERE p.user_id = $1
 	`, userID).Scan(
-		&p.Username, &p.XP, &p.Tokens, &p.Cases, &p.Wins, &p.Games, &p.HighScore,
+		&p.Username, &p.Avatar, &p.Country,
+		&p.XP, &p.Tokens, &p.Cases, &p.Wins, &p.Games, &p.HighScore,
 		&unlockedStr, &p.SelectedDice, &p.LoginStreak, &p.LastDailyReward,
 	)
 	if err != nil {
@@ -1268,6 +1286,9 @@ func fetchProfileByUserID(userID string) (ProfileData, error) {
 		p.UnlockedDice = []string{"ivory"}
 	} else {
 		p.UnlockedDice = strings.Split(unlockedStr, ",")
+	}
+	if p.Country == "" {
+		p.Country = "TR"
 	}
 	return p, nil
 }
@@ -1296,7 +1317,7 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(p)
 }
 
-// POST /profile/username : Kullanıcı adını ve kuşanılan zarı güvenli şekilde günceller
+// POST /profile/update : Kullanıcı adını, profil resmini, ülkesini ve kuşanılan zarı güvenli şekilde günceller
 func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
@@ -1312,8 +1333,10 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username     string `json:"username"`
-		SelectedDice string `json:"selectedDice"`
+		Username     string  `json:"username"`
+		SelectedDice string  `json:"selectedDice"`
+		Avatar       *string `json:"avatar"`
+		Country      string  `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Geçersiz veri", http.StatusBadRequest)
@@ -1326,6 +1349,17 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bu kullanıcı adı zaten kullanılıyor", http.StatusConflict)
 			return
 		}
+	}
+
+	if req.Avatar != nil {
+		av := strings.TrimSpace(*req.Avatar)
+		if len(av) <= 180000 { // Maksimum ~180KB Base64 resim veya emoji/preset
+			_, _ = db.Exec("UPDATE profiles SET avatar = $1 WHERE user_id = $2", av, userID)
+		}
+	}
+
+	if country := strings.ToUpper(strings.TrimSpace(req.Country)); len(country) >= 2 && len(country) <= 6 {
+		_, _ = db.Exec("UPDATE profiles SET country = $1 WHERE user_id = $2", country, userID)
 	}
 
 	if req.SelectedDice != "" {
@@ -1529,13 +1563,20 @@ type FriendItem struct {
 	FriendshipID int    `json:"friendshipId"`
 	UserID       int    `json:"userId"`
 	Username     string `json:"username"`
+	Avatar       string `json:"avatar"`
+	Country      string `json:"country"`
 	XP           int    `json:"xp"`
 	Wins         int    `json:"wins"`
+	IsOnline     bool   `json:"isOnline"`
+	InGame       bool   `json:"inGame"`
 }
 
 // GET /friends : Kullanıcının arkadaşlarını, bekleyen isteklerini ve aktif oyun davetlerini döner
 func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
 		return
 	}
 
@@ -1545,11 +1586,12 @@ func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	myID, _ := strconv.Atoi(uidStr)
+	touchUserPresence(myID)
 
 	rows, err := db.Query(`
 		SELECT f.id, f.requester_id, f.addressee_id, f.status,
-		       u1.username, p1.xp, p1.wins,
-		       u2.username, p2.xp, p2.wins
+		       u1.username, COALESCE(p1.avatar, ''), COALESCE(p1.country, 'TR'), p1.xp, p1.wins,
+		       u2.username, COALESCE(p2.avatar, ''), COALESCE(p2.country, 'TR'), p2.xp, p2.wins
 		FROM friendships f
 		JOIN users u1 ON u1.id = f.requester_id
 		JOIN profiles p1 ON p1.user_id = f.requester_id
@@ -1571,26 +1613,30 @@ func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var fid, reqID, addID int
 		var status string
-		var u1Name string
+		var u1Name, p1Av, p1Country string
 		var p1XP, p1Wins int
-		var u2Name string
+		var u2Name, p2Av, p2Country string
 		var p2XP, p2Wins int
 
-		if err := rows.Scan(&fid, &reqID, &addID, &status, &u1Name, &p1XP, &p1Wins, &u2Name, &p2XP, &p2Wins); err != nil {
+		if err := rows.Scan(&fid, &reqID, &addID, &status, &u1Name, &p1Av, &p1Country, &p1XP, &p1Wins, &u2Name, &p2Av, &p2Country, &p2XP, &p2Wins); err != nil {
 			continue
 		}
 
 		if status == "accepted" {
 			if reqID == myID {
-				friends = append(friends, FriendItem{FriendshipID: fid, UserID: addID, Username: u2Name, XP: p2XP, Wins: p2Wins})
+				on, ig := getUserOnlineState(addID)
+				friends = append(friends, FriendItem{FriendshipID: fid, UserID: addID, Username: u2Name, Avatar: p2Av, Country: p2Country, XP: p2XP, Wins: p2Wins, IsOnline: on, InGame: ig})
 			} else {
-				friends = append(friends, FriendItem{FriendshipID: fid, UserID: reqID, Username: u1Name, XP: p1XP, Wins: p1Wins})
+				on, ig := getUserOnlineState(reqID)
+				friends = append(friends, FriendItem{FriendshipID: fid, UserID: reqID, Username: u1Name, Avatar: p1Av, Country: p1Country, XP: p1XP, Wins: p1Wins, IsOnline: on, InGame: ig})
 			}
 		} else if status == "pending" {
 			if addID == myID {
-				incoming = append(incoming, FriendItem{FriendshipID: fid, UserID: reqID, Username: u1Name, XP: p1XP, Wins: p1Wins})
+				on, ig := getUserOnlineState(reqID)
+				incoming = append(incoming, FriendItem{FriendshipID: fid, UserID: reqID, Username: u1Name, Avatar: p1Av, Country: p1Country, XP: p1XP, Wins: p1Wins, IsOnline: on, InGame: ig})
 			} else {
-				outgoing = append(outgoing, FriendItem{FriendshipID: fid, UserID: addID, Username: u2Name, XP: p2XP, Wins: p2Wins})
+				on, ig := getUserOnlineState(addID)
+				outgoing = append(outgoing, FriendItem{FriendshipID: fid, UserID: addID, Username: u2Name, Avatar: p2Av, Country: p2Country, XP: p2XP, Wins: p2Wins, IsOnline: on, InGame: ig})
 			}
 		}
 	}

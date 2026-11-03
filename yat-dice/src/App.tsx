@@ -19,8 +19,12 @@ interface FriendItem {
   friendshipId: number;
   userId: number;
   username: string;
+  avatar?: string;
+  country?: string;
   xp: number;
   wins: number;
+  isOnline?: boolean;
+  inGame?: boolean;
 }
 
 interface GameInvite {
@@ -35,6 +39,8 @@ interface DieState { value: DieVal; rx: number; ry: number; px: number; py: numb
 interface UserProfile { 
   name: string; 
   seed: string; 
+  avatar?: string;
+  country?: string;
   level: number; 
   xp: number; 
   tokens: number;           
@@ -47,6 +53,28 @@ interface UserProfile {
     gamesPlayed: number;
     highScore: number;
   };
+}
+
+const COUNTRIES: { code: string; flag: string; name: string }[] = [
+  { code: "TR", flag: "🇹🇷", name: "Türkiye" },
+  { code: "AZ", flag: "🇦🇿", name: "Azerbaycan" },
+  { code: "DE", flag: "🇩🇪", name: "Almanya" },
+  { code: "GB", flag: "🇬🇧", name: "Birleşik Krallık" },
+  { code: "US", flag: "🇺🇸", name: "ABD" },
+  { code: "NL", flag: "🇳🇱", name: "Hollanda" },
+  { code: "FR", flag: "🇫🇷", name: "Fransa" },
+  { code: "ES", flag: "🇪🇸", name: "İspanya" },
+  { code: "IT", flag: "🇮🇹", name: "İtalya" },
+  { code: "JP", flag: "🇯🇵", name: "Japonya" },
+  { code: "KR", flag: "🇰🇷", name: "Güney Kore" },
+  { code: "BR", flag: "🇧🇷", name: "Brezilya" },
+];
+
+const PRESET_AVATARS = ["🎲", "👑", "🦁", "🐉", "🦊", "🐼", "⚡", "🔥", "💎", "🤖", "🎯", "🧙‍♂️"];
+
+function getCountryFlag(code?: string): string {
+  const found = COUNTRIES.find(c => c.code === (code || "TR").toUpperCase());
+  return found ? found.flag : "🇹🇷";
 }
 
 export interface MatchSummary {
@@ -337,12 +365,18 @@ function Die3D({
   );
 }
 
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-function Av({ seed, size=40, active=false, dark }: { seed:string; size?:number; active?:boolean; dark:boolean }) {
+// ─── Avatar (Profil Resmi, Emoji Avatar ve Ülke Bayrağı Destekli) ─────────────
+function Av({
+  seed, size=40, active=false, dark, avatar, country
+}: {
+  seed:string; size?:number; active?:boolean; dark:boolean; avatar?:string; country?:string;
+}) {
   const c = C(dark);
   const pal=[["#7a9e8a","#3d6050"],["#8b7855","#5e4a2c"],["#7a8fa8","#486888"],["#a07868","#6e4030"]];
   const [f,t]=pal[(seed.charCodeAt(0) || 0)%pal.length];
   const letters = seed.substring(0,2).toUpperCase() || "Ü";
+  const isImg = avatar && avatar.startsWith("data:image/");
+  const isEmoji = avatar && !isImg && avatar.length > 0;
   
   return (
     <div style={{
@@ -350,11 +384,25 @@ function Av({ seed, size=40, active=false, dark }: { seed:string; size?:number; 
       background:`linear-gradient(145deg,${f},${t})`,
       border: active?`2px solid ${c.accent}`:`1.5px solid ${c.border}`,
       display:"flex", alignItems:"center", justifyContent:"center",
-      fontSize:size*0.33, fontWeight:700, color:"#fff", flexShrink:0,
+      fontSize: isEmoji ? size*0.48 : size*0.33, fontWeight:700, color:"#fff", flexShrink:0,
       boxShadow: active?`0 0 0 3px ${c.accentRing}`:undefined,
-      fontFamily:"Inter,sans-serif",
+      fontFamily:"Inter,sans-serif", position:"relative", overflow:"visible"
     }}>
-      {letters}
+      {isImg ? (
+        <img src={avatar} alt="avatar" style={{ width:"100%", height:"100%", borderRadius:"50%", objectFit:"cover" }} />
+      ) : isEmoji ? (
+        <span>{avatar}</span>
+      ) : (
+        letters
+      )}
+      {country && (
+        <span style={{
+          position:"absolute", top:-3, left:-4, fontSize: Math.max(10, size*0.28),
+          lineHeight:1, filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+        }}>
+          {getCountryFlag(country)}
+        </span>
+      )}
     </div>
   );
 }
@@ -714,6 +762,8 @@ function HomeScreen({
   const [joinCode, setJoinCode] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(profile.name);
+  const [tempAvatar, setTempAvatar] = useState(profile.avatar || "");
+  const [tempCountry, setTempCountry] = useState(profile.country || "TR");
   
   const [showDailyPopup, setShowDailyPopup] = useState(false);
   const [pendingReward, setPendingReward] = useState({ xp: 0, tokens: 0, streak: 1 });
@@ -721,7 +771,33 @@ function HomeScreen({
 
   useEffect(() => {
     setTempName(profile.name);
-  }, [profile.name]);
+    setTempAvatar(profile.avatar || "");
+    setTempCountry(profile.country || "TR");
+  }, [profile.name, profile.avatar, profile.country]);
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const minSide = Math.min(img.width, img.height);
+          const sx = (img.width - minSide) / 2;
+          const sy = (img.height - minSide) / 2;
+          ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, 128, 128);
+          setTempAvatar(canvas.toDataURL("image/jpeg", 0.82));
+        }
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
 
   // SAYFA YÜKLENDİĞİNDE GÜNLÜK ÖDÜLÜ KONTROL ET (Sadece profil veritabanından yüklendikten sonra!)
   useEffect(() => {
@@ -792,16 +868,26 @@ function HomeScreen({
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
           },
-          body: JSON.stringify({ username: trimmed })
+          body: JSON.stringify({
+            username: trimmed,
+            avatar: tempAvatar,
+            country: tempCountry
+          })
         });
         if (!res.ok) {
           const msg = await res.text();
-          alert(msg || "Kullanıcı adı güncellenemedi");
+          alert(msg || "Profil güncellenemedi");
           return;
         }
       }
       localStorage.setItem("yatzy_username", trimmed);
-      setProfile(prev => ({ ...prev, name: trimmed, seed: trimmed.substring(0,2).toUpperCase() }));
+      setProfile(prev => ({
+        ...prev,
+        name: trimmed,
+        seed: trimmed.substring(0,2).toUpperCase(),
+        avatar: tempAvatar,
+        country: tempCountry
+      }));
     }
     setIsEditing(false);
   };
@@ -861,7 +947,7 @@ function HomeScreen({
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"28px 20px 14px" }}>
         <div onClick={()=>setIsEditing(true)} style={{ display:"flex", alignItems:"center", gap:12, cursor:"pointer", padding: "4px 8px 4px 0", borderRadius: 12, transition:"background 0.2s" }}>
           <div style={{ position:"relative" }}>
-            <Av seed={profile.seed} size={46} dark={dark}/>
+            <Av seed={profile.seed} size={46} dark={dark} avatar={profile.avatar} country={profile.country}/>
             <div style={{ position:"absolute", bottom:-2, right:-4, background:c.gold, color:"#fff", fontSize:9, fontWeight:700, borderRadius:6, padding:"1px 5px", border:`1.5px solid ${c.bg}` }}>{profile.level}</div>
           </div>
           <div>
@@ -1138,24 +1224,71 @@ function HomeScreen({
         )}
       </AnimatePresence>
 
-      {/* Profil Düzenleme Modalı */}
+      {/* Profil Düzenleme Modalı (Avatar, Fotoğraf Yükleme ve Ülke Seçimi) */}
       <AnimatePresence>
         {isEditing && (
-          <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-             <motion.div initial={{ scale:0.95, y:20 }} animate={{ scale:1, y:0 }} exit={{ scale:0.95, y:20 }} style={{ background:c.panel, borderRadius:24, width:"100%", maxWidth:320, padding:24, display:"flex", flexDirection:"column", gap:16, border:`1px solid ${c.border}`, boxShadow:"0 20px 50px rgba(0,0,0,0.5)" }}>
+          <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(6px)" }}>
+             <motion.div initial={{ scale:0.95, y:20 }} animate={{ scale:1, y:0 }} exit={{ scale:0.95, y:20 }} style={{ background:c.panel, borderRadius:24, width:"100%", maxWidth:350, maxHeight:"88vh", overflowY:"auto", padding:22, display:"flex", flexDirection:"column", gap:14, border:`1px solid ${c.border}`, boxShadow:"0 20px 50px rgba(0,0,0,0.5)" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <h3 style={{ color:c.text, fontSize:18, fontWeight:700, margin:0 }}>Profili Düzenle</h3>
+                  <h3 style={{ color:c.text, fontSize:18, fontWeight:800, margin:0 }}>Profili Özelleştir</h3>
                   <button onClick={()=>setIsEditing(false)} style={{ background:"none", border:"none", color:c.textSub, cursor:"pointer" }}><X size={20}/></button>
                 </div>
-                <div style={{ display:"flex", justifyContent:"center", margin:"10px 0" }}>
-                   <Av seed={tempName || "U"} size={64} dark={dark} />
+
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, margin:"4px 0" }}>
+                   <Av seed={tempName || "U"} size={72} dark={dark} avatar={tempAvatar} country={tempCountry} active={true} />
+                   <div style={{ display:"flex", gap:8 }}>
+                     <label style={{ background:c.accentBg, border:`1px solid ${c.accentRing}`, color:c.accent, padding:"6px 12px", borderRadius:10, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                       📷 Fotoğraf Yükle
+                       <input type="file" accept="image/*" onChange={handleAvatarFileChange} style={{ display:"none" }} />
+                     </label>
+                     {tempAvatar && (
+                       <button type="button" onClick={() => setTempAvatar("")} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, color:c.textSub, padding:"6px 10px", borderRadius:10, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                         Sıfırla
+                       </button>
+                     )}
+                   </div>
                 </div>
+
                 <div>
-                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:600 }}>Kullanıcı Adı</p>
-                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:"Inter,sans-serif" }} placeholder="Adınızı girin" />
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Hazır Avatar Seç</p>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(6, 1fr)", gap:6 }}>
+                    {PRESET_AVATARS.map(em => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setTempAvatar(em)}
+                        style={{
+                          padding:"7px 0", borderRadius:10, fontSize:18, cursor:"pointer",
+                          background: tempAvatar === em ? c.accentBg : c.bg,
+                          border: tempAvatar === em ? `1.5px solid ${c.accent}` : `1px solid ${c.border}`
+                        }}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:8, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:700, fontSize:15 }}>Değişiklikleri Kaydet</button>
-                <button onClick={onLogout} style={{ width:"100%", padding:14, marginTop:8, borderRadius:12, background:"rgba(255, 71, 87, 0.1)", color:"#ff4757", border:`1px solid rgba(255, 71, 87, 0.3)`, cursor:"pointer", fontWeight:700, fontSize:15 }}>
+
+                <div>
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Ülke / Bayrak</p>
+                  <select
+                    value={tempCountry}
+                    onChange={e => setTempCountry(e.target.value)}
+                    style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"11px 14px", borderRadius:12, fontSize:14, fontWeight:600, outline:"none" }}
+                  >
+                    {COUNTRIES.map(co => (
+                      <option key={co.code} value={co.code}>{co.flag} {co.name} ({co.code})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Kullanıcı Adı</p>
+                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:"Inter,sans-serif", fontWeight:600 }} placeholder="Adınızı girin" />
+                </div>
+
+                <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:14 }}>Değişiklikleri Kaydet</button>
+                <button onClick={onLogout} style={{ width:"100%", padding:13, borderRadius:12, background:"rgba(255, 71, 87, 0.1)", color:"#ff4757", border:`1px solid rgba(255, 71, 87, 0.3)`, cursor:"pointer", fontWeight:700, fontSize:14 }}>
                    Çıkış Yap
                 </button>
              </motion.div>
@@ -2167,7 +2300,7 @@ function FriendsScreen({
                 {incoming.map(req => (
                   <div key={req.friendshipId} style={{ background: c.panel, border: `1px solid ${c.gold}50`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Av seed={req.username.substring(0, 2).toUpperCase()} size={36} dark={dark} />
+                      <Av seed={req.username.substring(0, 2).toUpperCase()} size={36} dark={dark} avatar={req.avatar} country={req.country} />
                       <div>
                         <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}>{req.username}</p>
                         <p style={{ fontSize: 11, color: c.textSub, margin: 0 }}>Seviye {computeLevel(req.xp)} • {req.wins} Galibiyet</p>
@@ -2199,12 +2332,24 @@ function FriendsScreen({
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {friends.map(f => (
-                  <div key={f.friendshipId} style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div key={f.friendshipId} style={{ background: c.panel, border: `1px solid ${f.isOnline ? c.accentRing : c.border}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Av seed={f.username.substring(0, 2).toUpperCase()} size={38} dark={dark} />
+                      <div style={{ position: "relative" }}>
+                        <Av seed={f.username.substring(0, 2).toUpperCase()} size={40} dark={dark} avatar={f.avatar} country={f.country} active={!!f.isOnline} />
+                        <span style={{
+                          position: "absolute", bottom: -1, right: -1, width: 11, height: 11,
+                          borderRadius: "50%", border: `2px solid ${c.panel}`,
+                          background: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : "#7f8c8d")
+                        }} />
+                      </div>
                       <div>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}>{f.username}</p>
-                        <p style={{ fontSize: 11, color: c.textSub, margin: 0 }}>Seviye {computeLevel(f.xp)} • 🏆 {f.wins} Galibiyet</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}>{f.username}</p>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : c.textFaint) }}>
+                            {f.inGame ? "🎮 Oyunda" : (f.isOnline ? "🟢 Çevrimiçi" : "⚪ Çevrimdışı")}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0" }}>Seviye {computeLevel(f.xp)} • 🏆 {f.wins} Galibiyet</p>
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2287,6 +2432,9 @@ export default function App() {
   const [incomingRequests, setIncomingRequests] = useState<FriendItem[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<FriendItem[]>([]);
   const [gameInvites, setGameInvites] = useState<GameInvite[]>([]);
+  const [onlineToast, setOnlineToast] = useState<FriendItem | null>(null);
+  const prevOnlineIdsRef = React.useRef<Set<number>>(new Set());
+  const friendsInitRef = React.useRef<boolean>(false);
   const c = C(dark);
 
   const fetchFriends = async () => {
@@ -2297,7 +2445,19 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.friends || []);
+        const nextFriends: FriendItem[] = data.friends || [];
+        if (friendsInitRef.current) {
+          for (const f of nextFriends) {
+            if (f.isOnline && !prevOnlineIdsRef.current.has(f.userId)) {
+              setOnlineToast(f);
+              setTimeout(() => setOnlineToast(prev => prev?.userId === f.userId ? null : prev), 4500);
+              break;
+            }
+          }
+        }
+        prevOnlineIdsRef.current = new Set(nextFriends.filter(f => f.isOnline).map(f => f.userId));
+        friendsInitRef.current = true;
+        setFriends(nextFriends);
         setIncomingRequests(data.incoming || []);
         setOutgoingRequests(data.outgoing || []);
         setGameInvites(data.invites || []);
@@ -2392,6 +2552,8 @@ export default function App() {
         setProfile({
           name: uname,
           seed: uname.substring(0, 2).toUpperCase(),
+          avatar: data.avatar || "",
+          country: data.country || "TR",
           xp: data.xp,
           level: computeLevel(data.xp),
           tokens: data.tokens,
@@ -2502,6 +2664,57 @@ export default function App() {
         overflow:"hidden", position:"relative", display:"flex", flexDirection:"column",
         boxShadow:"0 24px 64px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.12)",
       }}>
+
+        {/* Arkadaş Çevrimiçi Oldu Bildirimi */}
+        <AnimatePresence>
+          {screen !== "auth" && screen !== "game" && onlineToast && gameInvites.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -35 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -35 }}
+              style={{
+                background: c.panel,
+                borderBottom: `2px solid #2ecc71`,
+                padding: "10px 16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                zIndex: 79,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.35)"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Av seed={onlineToast.username} size={32} dark={dark} avatar={onlineToast.avatar} country={onlineToast.country} active={true} />
+                <div>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: c.text, margin: 0 }}>
+                    🟢 {onlineToast.username} çevrimiçi oldu!
+                  </p>
+                  <p style={{ fontSize: 10, color: c.textSub, margin: 0 }}>Hemen maça davet edebilirsin</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const targetId = onlineToast.userId;
+                  setOnlineToast(null);
+                  setScreen("home");
+                  if (createdRoomCode) {
+                    sendGameInvite(targetId, createdRoomCode);
+                  } else {
+                    connectToServer("CREATE_ROOM", undefined, targetId);
+                  }
+                }}
+                style={{
+                  background: c.accent, color: dark ? c.bg : "#fff",
+                  border: "none", borderRadius: 10, padding: "7px 12px",
+                  fontSize: 11, fontWeight: 800, cursor: "pointer"
+                }}
+              >
+                🎲 Davet Et
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Gelen Oyun Daveti Bildirim Banner'ı */}
         <AnimatePresence>
