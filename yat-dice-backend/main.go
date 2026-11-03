@@ -76,13 +76,34 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	ID        string
-	UserID    int // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
-	Conn      *websocket.Conn
-	WriteMu   sync.Mutex // Concurrent websocket write panic önleyici
-	Room      *Room
-	Username  string
-	BetAmount int
+	ID          string
+	UserID      int // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
+	Conn        *websocket.Conn
+	WriteMu     sync.Mutex // Concurrent websocket write panic önleyici
+	Room        *Room
+	Username    string
+	BetAmount   int
+	LastEmojiAt time.Time
+	LastChatAt  time.Time
+}
+
+func sanitizeChatMessage(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.ReplaceAll(s, "<", "")
+	s = strings.ReplaceAll(s, ">", "")
+	runes := []rune(s)
+	if len(runes) > 120 {
+		s = string(runes[:120])
+	}
+	badWords := []string{"aptal", "salak", "gerizekalı", "küfür"}
+	lower := strings.ToLower(s)
+	for _, bw := range badWords {
+		if strings.Contains(lower, bw) {
+			s = "***"
+			break
+		}
+	}
+	return s
 }
 
 // WriteJSON güvenli (thread-safe) WebSocket mesaj gönderimi sağlar
@@ -1032,14 +1053,76 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 		switch msgType {
 		case "EMOJI":
-			// Hızlı Emoji / Reaksiyon gönderimi (Sıra beklemeden gönderilebilir)
+			// Hızlı Emoji / Reaksiyon gönderimi (Anti-spam: 2 saniyede en fazla 1 emoji)
+			if time.Since(client.LastEmojiAt) < 2000*time.Millisecond {
+				_ = client.WriteJSON(map[string]interface{}{
+					"type":    "SPAM_WARN",
+					"message": "Emoji spam koruması: Lütfen 2 saniye bekleyin.",
+				})
+				room.Mu.Unlock()
+				continue
+			}
 			emoji, ok := msg["emoji"].(string)
-			if ok && len(emoji) <= 16 {
+			if ok && len(emoji) > 0 && len(emoji) <= 16 {
+				client.LastEmojiAt = time.Now()
 				room.broadcastLocked(map[string]interface{}{
 					"type":   "EMOJI",
 					"emoji":  emoji,
 					"sender": playerRole,
 				})
+			}
+
+		case "CHAT":
+			// Oyun içi canlı sohbet (Anti-spam: 2.5 saniye bekleme süresi + 120 karakter sınırı)
+			if time.Since(client.LastChatAt) < 2500*time.Millisecond {
+				_ = client.WriteJSON(map[string]interface{}{
+					"type":    "SPAM_WARN",
+					"message": "Çok hızlı yazıyorsunuz! Lütfen 2.5 saniye bekleyin.",
+				})
+				room.Mu.Unlock()
+				continue
+			}
+			rawText, _ := msg["text"].(string)
+			cleanText := sanitizeChatMessage(rawText)
+			if cleanText == "" {
+				room.Mu.Unlock()
+				continue
+			}
+			client.LastChatAt = time.Now()
+			nowStr := time.Now().Format("15:04")
+			room.broadcastLocked(map[string]interface{}{
+				"type":       "CHAT",
+				"sender":     playerRole,
+				"senderName": client.Username,
+				"text":       cleanText,
+				"time":       nowStr,
+			})
+
+			// Bota karşı oynanıyorsa YatBot samimi bir yanıt verir
+			if room.IsBotMatch {
+				go func(r *Room, userText string) {
+					time.Sleep(1100 * time.Millisecond)
+					r.Mu.Lock()
+					defer r.Mu.Unlock()
+					if r.GameOver {
+						return
+					}
+					replies := []string{
+						"Bol şans! Zarlar bugün güzel dönüyor 🎲",
+						"İyi hamle! Bakalım YAT kimden gelecek 🔥",
+						"Güzel maç oluyor, başarılar! 😎",
+						"Hesaplamalarıma göre bu tur çok kritik 🤖",
+						"Harika gidiyorsun! 👏",
+					}
+					botReply := replies[secureRandInt(len(replies))]
+					r.broadcastLocked(map[string]interface{}{
+						"type":       "CHAT",
+						"sender":     "p2",
+						"senderName": "🤖 YatBot",
+						"text":       botReply,
+						"time":       time.Now().Format("15:04"),
+					})
+				}(room, cleanText)
 			}
 
 		case "TOGGLE_LOCK":

@@ -1701,6 +1701,24 @@ function GameScreen({
   const [turnTimeLeft, setTurnTimeLeft] = useState(30);
   const [floatingEmoji, setFloatingEmoji] = useState<{emoji:string; fromMe:boolean; id:number}|null>(null);
 
+  // Canlı Sohbet & Anti-Spam State'leri
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ sender: string; senderName: string; text: string; time: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [unreadChat, setUnreadChat] = useState(0);
+  const [chatPreview, setChatPreview] = useState<{ senderName: string; text: string } | null>(null);
+  const [emojiCooldown, setEmojiCooldown] = useState(false);
+  const [chatCooldown, setChatCooldown] = useState(false);
+  const [spamWarn, setSpamWarn] = useState<string | null>(null);
+  const chatOpenRef = React.useRef(false);
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+    if (chatOpen) {
+      setUnreadChat(0);
+      setChatPreview(null);
+    }
+  }, [chatOpen]);
+
   const [scorePopup, setScorePopup] = useState<{pts:number; label:string; id:number}|null>(null);
   const popupIdRef = React.useRef(0);
   const emojiIdRef = React.useRef(0);
@@ -1767,6 +1785,24 @@ function GameScreen({
         const id = ++emojiIdRef.current;
         setFloatingEmoji({ emoji: data.emoji, fromMe: data.sender === myPlayerId, id });
         setTimeout(() => setFloatingEmoji(prev => prev?.id === id ? null : prev), 2200);
+      }
+      else if (data.type === "CHAT") {
+        const newMsg = {
+          sender: data.sender || "p2",
+          senderName: data.senderName || "Oyuncu",
+          text: data.text || "",
+          time: data.time || ""
+        };
+        setChatMessages(prev => [...prev.slice(-49), newMsg]);
+        if (!chatOpenRef.current && data.sender !== myPlayerId) {
+          setUnreadChat(prev => prev + 1);
+          setChatPreview({ senderName: newMsg.senderName, text: newMsg.text });
+          setTimeout(() => setChatPreview(null), 3500);
+        }
+      }
+      else if (data.type === "SPAM_WARN") {
+        setSpamWarn(data.message || "Çok hızlı işlem yapıyorsunuz!");
+        setTimeout(() => setSpamWarn(null), 2200);
       }
       else if (data.type === "OPPONENT_LEFT") {
         setOpponentLeft(true);
@@ -1885,8 +1921,30 @@ function GameScreen({
   };
 
   const sendEmoji = (emoji: string) => {
-    if (!ws) return;
+    if (!ws || emojiCooldown) {
+      if (emojiCooldown) {
+        setSpamWarn("Emoji spam koruması aktif (2sn).");
+        setTimeout(() => setSpamWarn(null), 1800);
+      }
+      return;
+    }
+    setEmojiCooldown(true);
+    setTimeout(() => setEmojiCooldown(false), 2000);
     ws.send(JSON.stringify({ type: "EMOJI", emoji }));
+  };
+
+  const sendChat = (customText?: string) => {
+    const txt = (customText ?? chatInput).trim();
+    if (!ws || !txt) return;
+    if (chatCooldown) {
+      setSpamWarn("Sohbet spam koruması: 2.5 saniye bekleyin.");
+      setTimeout(() => setSpamWarn(null), 2000);
+      return;
+    }
+    setChatCooldown(true);
+    setTimeout(() => setChatCooldown(false), 2500);
+    ws.send(JSON.stringify({ type: "CHAT", text: txt.slice(0, 120) }));
+    if (!customText) setChatInput("");
   };
 
   const diceVals = dieStates.map(s=>s.value);
@@ -1899,13 +1957,40 @@ function GameScreen({
            <ChevronLeft size={16} /> TERK ET
          </button>
 
-         {/* Hızlı Emoji Çubuğu */}
-         <div style={{ display:"flex", gap:6 }}>
+         {/* Hızlı Emoji ve Canlı Sohbet Çubuğu */}
+         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
            {["🎲", "👏", "🔥", "😱", "😎"].map(em => (
-             <button key={em} onClick={() => sendEmoji(em)} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:8, padding:"3px 7px", cursor:"pointer", fontSize:13 }}>
+             <button
+               key={em}
+               onClick={() => sendEmoji(em)}
+               style={{
+                 background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:8,
+                 padding:"3px 7px", cursor: emojiCooldown ? "not-allowed" : "pointer",
+                 fontSize:13, opacity: emojiCooldown ? 0.45 : 1, transition: "0.15s"
+               }}
+             >
                {em}
              </button>
            ))}
+           <button
+             onClick={() => setChatOpen(true)}
+             style={{
+               position: "relative", background: c.accentBg, border: `1px solid ${c.accentRing}`,
+               color: c.accent, borderRadius: 8, padding: "4px 9px", cursor: "pointer",
+               fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4
+             }}
+           >
+             💬 Sohbet
+             {unreadChat > 0 && (
+               <span style={{
+                 position: "absolute", top: -5, right: -5, background: c.danger, color: "#fff",
+                 fontSize: 9, fontWeight: 900, width: 16, height: 16, borderRadius: "50%",
+                 display: "flex", alignItems: "center", justifyContent: "center"
+               }}>
+                 {unreadChat}
+               </span>
+             )}
+           </button>
          </div>
       </div>
 
@@ -2185,6 +2270,160 @@ function GameScreen({
                   Evet, Çık
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Anti-Spam Uyarı Bildirimi */}
+      <AnimatePresence>
+        {spamWarn && (
+          <motion.div
+            initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }}
+            style={{
+              position: "absolute", top: 44, left: 20, right: 20, zIndex: 95,
+              background: "rgba(192, 57, 43, 0.95)", color: "#fff",
+              padding: "8px 14px", borderRadius: 10, fontSize: 11, fontWeight: 800,
+              textAlign: "center", boxShadow: "0 6px 20px rgba(0,0,0,0.35)"
+            }}
+          >
+            🛡️ {spamWarn}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Rakip Sohbet Mesajı Önizleme Balonu (Sohbet kapalıyken) */}
+      <AnimatePresence>
+        {chatPreview && !chatOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }}
+            onClick={() => setChatOpen(true)}
+            style={{
+              position: "absolute", top: 48, right: 16, zIndex: 85,
+              background: c.panel, border: `1.5px solid ${c.accent}`,
+              padding: "8px 12px", borderRadius: 12, maxWidth: 240,
+              cursor: "pointer", boxShadow: `0 8px 24px ${c.shadow}`
+            }}
+          >
+            <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, margin: 0 }}>💬 {chatPreview.senderName}</p>
+            <p style={{ fontSize: 12, color: c.text, margin: "2px 0 0", wordBreak: "break-word" }}>{chatPreview.text}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* OYUN İÇİ CANLI SOHBET PANELİ */}
+      <AnimatePresence>
+        {chatOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setChatOpen(false)}
+            style={{
+              position: "absolute", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 110,
+              display: "flex", flexDirection: "column", justifyContent: "flex-end", backdropFilter: "blur(4px)"
+            }}
+          >
+            <motion.div
+              initial={{ y: 260 }} animate={{ y: 0 }} exit={{ y: 260 }}
+              transition={{ type: "spring", damping: 22, stiffness: 260 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: c.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+                borderTop: `1.5px solid ${c.borderMid}`, padding: "16px 18px 20px",
+                height: "62%", display: "flex", flexDirection: "column", gap: 10,
+                boxShadow: "0 -12px 40px rgba(0,0,0,0.45)"
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${c.border}`, paddingBottom: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 15, fontWeight: 800, color: c.text, margin: 0 }}>💬 Maç Sohbeti</h3>
+                  <span style={{ fontSize: 10, color: c.textSub }}>Spam koruması aktif (2.5sn bekleme süresi)</span>
+                </div>
+                <button onClick={() => setChatOpen(false)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8, padding: 6, color: c.textSub, cursor: "pointer", display: "flex" }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Hızlı Hazır Mesajlar */}
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                {["Bol şans! 🍀", "İyi hamle! 👏", "Eyvah! 😅", "YAT geliyor! 🔥", "İyi oyundu! 🤝"].map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={chatCooldown}
+                    onClick={() => sendChat(preset)}
+                    style={{
+                      flexShrink: 0, background: c.panelAlt, border: `1px solid ${c.border}`,
+                      color: c.text, borderRadius: 14, padding: "5px 10px", fontSize: 11,
+                      fontWeight: 600, cursor: chatCooldown ? "not-allowed" : "pointer",
+                      opacity: chatCooldown ? 0.5 : 1
+                    }}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+
+              {/* Mesaj Listesi */}
+              <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, padding: "4px 2px" }}>
+                {chatMessages.length === 0 ? (
+                  <div style={{ margin: "auto", textAlign: "center", color: c.textFaint, fontSize: 12 }}>
+                    Henüz mesaj yok. Rakibine selam ver! 👋
+                  </div>
+                ) : (
+                  chatMessages.map((m, idx) => {
+                    const isMe = m.sender === myPlayerId;
+                    return (
+                      <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: isMe ? "flex-end" : "flex-start" }}>
+                        <span style={{ fontSize: 9, color: c.textSub, marginBottom: 2, fontWeight: 600 }}>
+                          {isMe ? "Sen" : m.senderName} • {m.time}
+                        </span>
+                        <div style={{
+                          background: isMe ? c.accent : c.panelAlt,
+                          color: isMe ? (dark ? c.bg : "#fff") : c.text,
+                          padding: "8px 12px", borderRadius: 14,
+                          borderBottomRightRadius: isMe ? 4 : 14,
+                          borderBottomLeftRadius: isMe ? 14 : 4,
+                          fontSize: 13, fontWeight: 600, maxWidth: "82%", wordBreak: "break-word"
+                        }}>
+                          {m.text}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Mesaj Gönderme Formu */}
+              <form
+                onSubmit={e => { e.preventDefault(); sendChat(); }}
+                style={{ display: "flex", gap: 8, marginTop: 4 }}
+              >
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  placeholder={chatCooldown ? "Spam koruması: Lütfen bekleyin..." : "Mesaj yaz (Maks 120 kr)..."}
+                  style={{
+                    flex: 1, background: c.bg, border: `1px solid ${c.border}`,
+                    borderRadius: 12, padding: "11px 14px", color: c.text,
+                    fontSize: 13, outline: "none", fontWeight: 600
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={chatCooldown || !chatInput.trim()}
+                  style={{
+                    background: chatCooldown ? c.panelAlt : c.accent,
+                    color: chatCooldown ? c.textFaint : (dark ? c.bg : "#fff"),
+                    border: "none", borderRadius: 12, padding: "0 16px",
+                    fontWeight: 800, fontSize: 13,
+                    cursor: (chatCooldown || !chatInput.trim()) ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {chatCooldown ? "⏳" : "Gönder"}
+                </button>
+              </form>
             </motion.div>
           </motion.div>
         )}
