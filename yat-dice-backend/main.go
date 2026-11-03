@@ -137,6 +137,8 @@ type Room struct {
 	Locked        [5]bool
 	P1Scores      map[string]int
 	P2Scores      map[string]int
+	P1YachtCount  int
+	P2YachtCount  int
 	GameOver      bool
 	TurnDeadline  time.Time
 	TurnTimerStop chan struct{}
@@ -363,14 +365,18 @@ func deductBetDB(userID int, bet int) bool {
 	return rows > 0
 }
 
-// Veritabanında maç sonu ödüllerini güvenli şekilde günceller
-func awardMatchResultDB(userID int, won bool, score int, xpGain int, tokenGain int, caseGain int) {
+// Veritabanında maç sonu ödüllerini ve görev istatistiklerini güvenli şekilde günceller
+func awardMatchResultDB(userID int, won bool, score int, xpGain int, tokenGain int, caseGain int, upperBonusWon bool, yachtsInMatch int) {
 	if userID <= 0 {
 		return
 	}
 	winInc := 0
 	if won {
 		winInc = 1
+	}
+	bonusInc := 0
+	if upperBonusWon {
+		bonusInc = 1
 	}
 	_, err := db.Exec(`
 		UPDATE profiles
@@ -379,9 +385,12 @@ func awardMatchResultDB(userID int, won bool, score int, xpGain int, tokenGain i
 		    cases = cases + $3,
 		    wins = wins + $4,
 		    games_played = games_played + 1,
-		    high_score = GREATEST(high_score, $5)
-		WHERE user_id = $6
-	`, xpGain, tokenGain, caseGain, winInc, score, userID)
+		    high_score = GREATEST(high_score, $5),
+		    upper_bonuses_won = COALESCE(upper_bonuses_won, 0) + $6,
+		    total_yachts = COALESCE(total_yachts, 0) + $7,
+		    max_yachts_in_match = GREATEST(COALESCE(max_yachts_in_match, 0), $7)
+		WHERE user_id = $8
+	`, xpGain, tokenGain, caseGain, winInc, score, bonusInc, yachtsInMatch, userID)
 	if err != nil {
 		log.Println("Maç ödülü DB güncelleme hatası:", err)
 	}
@@ -492,6 +501,15 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 	scores[key] = pts
 	scoredPlayer := r.Turn
 
+	// Eğer bu turda zarların 5'i de aynıysa (YAT atıldıysa), oyuncunun maç içi YAT sayacını artır
+	if calcScoreServer("yacht", r.Dice) == 50 {
+		if scoredPlayer == "p1" {
+			r.P1YachtCount++
+		} else {
+			r.P2YachtCount++
+		}
+	}
+
 	if r.Turn == "p1" {
 		r.Turn = "p2"
 	} else {
@@ -553,13 +571,15 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 		}
 
 		if r.Player1 != nil {
-			awardMatchResultDB(r.Player1.UserID, p1Won, p1Total, p1XP, p1Tokens, p1Cases)
+			awardMatchResultDB(r.Player1.UserID, p1Won, p1Total, p1XP, p1Tokens, p1Cases, p1Bonus > 0, r.P1YachtCount)
 		}
 		if r.Player2 != nil {
-			awardMatchResultDB(r.Player2.UserID, p2Won, p2Total, p2XP, p2Tokens, p2Cases)
+			awardMatchResultDB(r.Player2.UserID, p2Won, p2Total, p2XP, p2Tokens, p2Cases, p2Bonus > 0, r.P2YachtCount)
 		}
 
 		msg["betAmount"] = r.BetAmount
+		msg["p1Yachts"] = r.P1YachtCount
+		msg["p2Yachts"] = r.P2YachtCount
 		msg["rewards"] = map[string]interface{}{
 			"p1": map[string]int{"xp": p1XP, "tokens": p1Tokens, "cases": p1Cases, "betPot": r.BetAmount * 2},
 			"p2": map[string]int{"xp": p2XP, "tokens": p2Tokens, "cases": p2Cases, "betPot": r.BetAmount * 2},
@@ -860,7 +880,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 				if opponent != nil {
 					forfeitTokens := 50 + (room.BetAmount * 2)
-					awardMatchResultDB(opponent.UserID, true, 0, 150, forfeitTokens, 0)
+					awardMatchResultDB(opponent.UserID, true, 0, 150, forfeitTokens, 0, false, 0)
 					_ = opponent.WriteJSON(map[string]interface{}{
 						"type": "OPPONENT_LEFT",
 						"reward": map[string]int{
@@ -1252,6 +1272,10 @@ func createTables() {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT FALSE;`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT '';`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS country VARCHAR(10) DEFAULT 'TR';`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS upper_bonuses_won INT DEFAULT 0;`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS total_yachts INT DEFAULT 0;`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS max_yachts_in_match INT DEFAULT 0;`,
+		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS claimed_quests TEXT DEFAULT '';`,
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -1366,19 +1390,23 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 type ProfileData struct {
-	Username        string   `json:"username"`
-	Avatar          string   `json:"avatar"`
-	Country         string   `json:"country"`
-	XP              int      `json:"xp"`
-	Tokens          int      `json:"tokens"`
-	Cases           int      `json:"cases"`
-	Wins            int      `json:"wins"`
-	Games           int      `json:"gamesPlayed"`
-	HighScore       int      `json:"highScore"`
-	UnlockedDice    []string `json:"unlockedDice"`
-	SelectedDice    string   `json:"selectedDice"`
-	LoginStreak     int      `json:"loginStreak"`
-	LastDailyReward string   `json:"lastDailyReward"`
+	Username         string   `json:"username"`
+	Avatar           string   `json:"avatar"`
+	Country          string   `json:"country"`
+	XP               int      `json:"xp"`
+	Tokens           int      `json:"tokens"`
+	Cases            int      `json:"cases"`
+	Wins             int      `json:"wins"`
+	Games            int      `json:"gamesPlayed"`
+	HighScore        int      `json:"highScore"`
+	UnlockedDice     []string `json:"unlockedDice"`
+	SelectedDice     string   `json:"selectedDice"`
+	LoginStreak      int      `json:"loginStreak"`
+	LastDailyReward  string   `json:"lastDailyReward"`
+	UpperBonusesWon  int      `json:"upperBonusesWon"`
+	TotalYachts      int      `json:"totalYachts"`
+	MaxYachtsInMatch int      `json:"maxYachtsInMatch"`
+	ClaimedQuests    []string `json:"claimedQuests"`
 }
 
 func parseTokenString(tokenString string) (string, error) {
@@ -1409,12 +1437,14 @@ func getUserIDFromToken(r *http.Request) (string, error) {
 
 func fetchProfileByUserID(userID string) (ProfileData, error) {
 	var p ProfileData
-	var unlockedStr string
+	var unlockedStr, claimedStr string
 	err := db.QueryRow(`
 		SELECT u.username, COALESCE(p.avatar, ''), COALESCE(p.country, 'TR'),
 		       p.xp, p.tokens, p.cases, p.wins, p.games_played, p.high_score,
 		       COALESCE(p.unlocked_dice, 'ivory'), COALESCE(p.selected_dice, 'ivory'),
-		       COALESCE(p.login_streak, 0), COALESCE(p.last_daily_reward, '')
+		       COALESCE(p.login_streak, 0), COALESCE(p.last_daily_reward, ''),
+		       COALESCE(p.upper_bonuses_won, 0), COALESCE(p.total_yachts, 0),
+		       COALESCE(p.max_yachts_in_match, 0), COALESCE(p.claimed_quests, '')
 		FROM profiles p
 		JOIN users u ON u.id = p.user_id
 		WHERE p.user_id = $1
@@ -1422,6 +1452,7 @@ func fetchProfileByUserID(userID string) (ProfileData, error) {
 		&p.Username, &p.Avatar, &p.Country,
 		&p.XP, &p.Tokens, &p.Cases, &p.Wins, &p.Games, &p.HighScore,
 		&unlockedStr, &p.SelectedDice, &p.LoginStreak, &p.LastDailyReward,
+		&p.UpperBonusesWon, &p.TotalYachts, &p.MaxYachtsInMatch, &claimedStr,
 	)
 	if err != nil {
 		return p, err
@@ -1430,6 +1461,11 @@ func fetchProfileByUserID(userID string) (ProfileData, error) {
 		p.UnlockedDice = []string{"ivory"}
 	} else {
 		p.UnlockedDice = strings.Split(unlockedStr, ",")
+	}
+	if claimedStr == "" {
+		p.ClaimedQuests = []string{}
+	} else {
+		p.ClaimedQuests = strings.Split(claimedStr, ",")
 	}
 	if p.Country == "" {
 		p.Country = "TR"
@@ -1994,6 +2030,7 @@ func main() {
 	http.HandleFunc("/profile/update", handleUpdateProfile)
 	http.HandleFunc("/profile/claim-daily", handleClaimDaily)
 	http.HandleFunc("/profile/open-case", handleOpenCase)
+	http.HandleFunc("/quests/claim", handleClaimQuest)
 	http.HandleFunc("/shop/buy", handleBuyDice)
 	http.HandleFunc("/friends", handleGetFriends)
 	http.HandleFunc("/friends/request", handleFriendRequest)

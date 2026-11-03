@@ -11,22 +11,26 @@
 
 ## ✨ Öne Çıkan Özellikler
 
-### 🎮 Oyun Modları ve Eşleşme
+### 🎮 Oyun Modları, Bahis Sistemi ve Eşleşme
 - **⚡ Hızlı Maç (Quick Match):** Çevrimiçi gerçek oyuncularla anında 1v1 eşleşme.
-- **🤖 Yapay Zeka Bot Modu (`YatBot`):** Çevrimiçi rakip beklemeden, akıllı zar tutma ve kategori seçme stratejisine sahip bota karşı anında oynama.
-- **🔑 Özel Oda Kurma & Kodla Katılma:** 4 haneli özel oda kodu oluşturup arkadaşlarınla özel maç yapma.
-- **👥 Arkadaşlık & Canlı Oyun Daveti Sistemi:** Kullanıcı adıyla arkadaş ekleme, arkadaşlık isteklerini yönetme ve tek tıkla arkadaşlarını özel odaya davet etme (ekran üstü canlı katılma bildirimi ile).
+- **🤖 Yapay Zeka Bot Modu (`YatBot`):** Çevrimiçi rakip beklemeden, akıllı zar tutma/kategori seçme stratejisine ve canlı sohbet yanıtlarına sahip bota karşı anında oynama.
+- **💰 Masa Bahsi (Wager / Ödül Havuzu):** Maça girerken `Ücretsiz`, `50`, `100`, `250` veya `500 🪙` bahis seçebilme; kazanan oyuncu `2x` ödül havuzunun tamamını alır!
+- **🔑 Özel Oda Kurma & Kodla Katılma:** 5 haneli özel oda kodu oluşturup arkadaşlarınla özel maç yapma.
+- **👥 Arkadaşlık, Çevrimiçi Bildirimi & Canlı Oyun Daveti:** Kullanıcı adıyla arkadaş ekleme, arkadaşların **🟢 Çevrimiçi** veya **🎮 Oyunda** durumlarını gerçek zamanlı görme, arkadaş oyuna girdiğinde anlık üst bildirim alma ve tek tıkla maça davet etme.
+- **💬 Canlı Maç Sohbeti & Anti-Spam Koruması:** Maç sırasında hazır mesajlar veya serbest metin ile gerçek zamanlı sohbet etme; hem emoji hem de sohbet mesajları için sunucu ve istemci tabanlı **Anti-Spam bekleme süresi (Cooldown)** ve içerik filtreleme.
 
-### 🛡️ Sunucu Otoriteli (Server-Authoritative) Mimari & Hile Koruması
-- **Sunucu Tabanlı Zar & Puanlama:** Zar atışları (`1-6`), zar kilitleme durumları, tur sırası ve tüm 13 kategorinin puan hesaplamaları (+35 Üst Bonus dahil) tamamen Go sunucusunda yapılır. İstemciden (frontend) gelen hiçbir puan veya zar verisine körü körüne güvenilmez.
-- **⏱️ 30 Saniye AFK / Tur Zamanlayıcısı:** Sırası gelen oyuncu 30 saniye içinde hamle yapmazsa sunucu otomatik olarak zar atıp en uygun açık kategoriyi seçerek oyunun kilitlenmesini önler.
-- **🔌 WebSocket Heartbeat & Hükmen Galibiyet:** Ping/Pong mekanizması ile kopan bağlantılar tespit edilir; rakip oyunu terk ederse kalan oyuncu hükmen galip sayılır ve ödüllerini (`+200 XP`, `+50 Jeton`, `+1 Sürpriz Kasa`) otomatik alır.
+### 🔐 Kimlik Doğrulama & Kurumsal Güvenlik Önlemleri
+- **🌐 Google Hesabıyla Kayıt & Giriş (`/auth/google`):** Tek tıkla Google e-posta hesabıyla kayıt olma veya mevcut hesaba bağlanma.
+- **🎲 Cihazda Kalıcı Misafir Hesabı (`/auth/guest`):** Misafir olarak giriş yapan oyuncular uygulamadan çıkıp tekrar girse bile cihaz kimliği (`deviceId`) sayesinde aynı misafir hesabında ve ilerlemesinde kalır.
+- **🔑 Şifre Sıfırlama (`/auth/forgot-password` & `/auth/reset-password`):** 6 haneli tek kullanımlık doğrulama kodu ve sabit zamanlı (`ConstantTimeCompare`) karşılaştırma ile güvenli şifre kurtarma.
+- **🛡️ Rate Limiting, Brute-Force Koruması & Güvenlik Başlıkları:** IP bazlı hız sınırlandırma, ardışık hatalı girişlerde 5 dakika geçici hesap kilitleme, `MaxBytesReader` (256KB payload sınırı), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` ve sunucu otoriteli (`Server-Authoritative`) oyun motoru.
 
-### 🏆 İlerleme, Ekonomi ve Koleksiyon
-- **Seviye, XP ve İstatistikler:** Oynanan maçlar, galibiyet oranı, en yüksek skor, XP ve jetonlar PostgreSQL veritabanında kalıcı olarak saklanır.
-- **🎁 Günlük Giriş Ödülü & Seri (Streak):** Her gün giriş yapan oyunculara artan serilerle jeton ve kasa ödülleri (sunucu doğrulamalı).
-- **📦 Sürpriz Kasa Açma & Mağaza:** Maçlardan kazanılan kasaları açarak veya jetonlarla mağazadan **Kehribar, Obsidyen, Yakut, Zümrüt, Safir, Elmas, Altın, Siber** gibi özel 3D zar görünümlerini açma ve kuşanma.
-- **🌗 Tema Desteği:** Karanlık (Dark) ve Aydınlık (Light) mod.
+### 🏆 Görev Modu (Quests), Koleksiyon ve Profil Özelleştirme
+- **🎯 Görev Modu (Normal & Zor Görevler):**
+  - *Normal Görevler:* İlk maçı tamamlama, Üst Toplamdan +35 Bonus alma, ilk YAT atma, 3 galibiyet serisi (XP ve Altın ödüllü).
+  - *Zor & Efsanevi Görevler:* Tek maçta 220+ skor, 3 kez Üst Toplam Bonusu, **Tek Maçta 2 YAT** ve **Tek Maçta 3 YAT** görevleri — yüksek XP ve Altın yanında **Sürpriz Kasa (`📦`)** kazandırır ve anında kasa açma ekranını tetikler!
+- **🖼️ Profil Resmi & Ülke Bayrağı:** Cihazdan fotoğraf yükleme (otomatik `128x128` kırpma/boyutlandırma), 12 hazır avatar ikonu ve ülke/bayrak seçimi (`🇹🇷`, `🇦🇿`, `🇩🇪`, `🇬🇧`, `🇺🇸` vb.).
+- **🔍 3D Büyük Zar Önizleme & Koleksiyon Marketi:** Koleksiyondan zar alırken zara tıklandığında açılan büyük 3D etkileşimli önizleme sahnesi (*zarı test ederek döndürme* ve *"Satın Al / Alma (Vazgeç)"* onayı). **Kemik, Ahşap, Mermer, Obsidyen, Kızıl Yakut ve Altın Kraliyet** zar setleri.
 
 ---
 

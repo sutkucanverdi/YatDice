@@ -11,7 +11,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends";
+type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends" | "quests";
 type DieVal  = 1 | 2 | 3 | 4 | 5 | 6;
 type DieMat  = "ivory" | "wood" | "marble" | "obsidian" | "ruby" | "gold";
 type BetOption = 0 | 50 | 100 | 250 | 500;
@@ -50,11 +50,127 @@ interface UserProfile {
   unlockedDice: DieMat[];   
   lastDailyReward: string;  
   loginStreak: number;
+  upperBonusesWon?: number;
+  totalYachts?: number;
+  maxYachtsInMatch?: number;
+  claimedQuests?: string[];
   stats: {
     wins: number;
     gamesPlayed: number;
     highScore: number;
   };
+}
+
+interface QuestItemDef {
+  id: string;
+  title: string;
+  desc: string;
+  icon: string;
+  difficulty: "normal" | "hard";
+  xp: number;
+  tokens: number;
+  cases: number;
+  getProgress: (p: UserProfile) => { current: number; target: number };
+}
+
+const QUEST_LIST: QuestItemDef[] = [
+  {
+    id: "first_match",
+    title: "İlk Zar, İlk Heyecan",
+    desc: "Herhangi bir modda ilk maçını tamamla.",
+    icon: "🎲",
+    difficulty: "normal",
+    xp: 150,
+    tokens: 75,
+    cases: 0,
+    getProgress: p => ({ current: Math.min(p.stats.gamesPlayed, 1), target: 1 }),
+  },
+  {
+    id: "upper_bonus_1",
+    title: "Üst Toplam Ustası",
+    desc: "Bir maçta Üst Toplamdan 63+ puana ulaşıp +35 Bonus kazan.",
+    icon: "📈",
+    difficulty: "normal",
+    xp: 300,
+    tokens: 150,
+    cases: 0,
+    getProgress: p => ({ current: Math.min(p.upperBonusesWon || 0, 1), target: 1 }),
+  },
+  {
+    id: "first_yacht",
+    title: "Beşi Bir Yerde (YAT)",
+    desc: "Maç sırasında 5 zarı da aynı getirerek YAT (50 puan) yap.",
+    icon: "⚡",
+    difficulty: "normal",
+    xp: 350,
+    tokens: 200,
+    cases: 0,
+    getProgress: p => ({ current: Math.min(p.totalYachts || 0, 1), target: 1 }),
+  },
+  {
+    id: "wins_3",
+    title: "Galibiyet Serisi",
+    desc: "Bota veya gerçek rakiplere karşı toplam 3 maç kazan.",
+    icon: "🏆",
+    difficulty: "normal",
+    xp: 400,
+    tokens: 250,
+    cases: 0,
+    getProgress: p => ({ current: Math.min(p.stats.wins, 3), target: 3 }),
+  },
+  {
+    id: "score_220",
+    title: "Rekor Kıran (Zor Görev)",
+    desc: "Tek bir maçta 220 veya üzeri toplam puana ulaş.",
+    icon: "🔥",
+    difficulty: "hard",
+    xp: 600,
+    tokens: 400,
+    cases: 1,
+    getProgress: p => ({ current: Math.min(p.stats.highScore, 220), target: 220 }),
+  },
+  {
+    id: "upper_bonus_3",
+    title: "Kusursuz Stratejist (Zor Görev)",
+    desc: "Toplam 3 farklı maçta Üst Toplam (+35) Bonusu al.",
+    icon: "🧠",
+    difficulty: "hard",
+    xp: 750,
+    tokens: 500,
+    cases: 1,
+    getProgress: p => ({ current: Math.min(p.upperBonusesWon || 0, 3), target: 3 }),
+  },
+  {
+    id: "double_yacht",
+    title: "Çifte YAT Efsanesi (Zor Görev)",
+    desc: "Tek bir maç içinde 2 kez YAT (5 aynı zar) at!",
+    icon: "💎",
+    difficulty: "hard",
+    xp: 1000,
+    tokens: 750,
+    cases: 2,
+    getProgress: p => ({ current: Math.min(p.maxYachtsInMatch || 0, 2), target: 2 }),
+  },
+  {
+    id: "triple_yacht",
+    title: "İmkansız Üçleme: 3 YAT (Efsanevi)",
+    desc: "Tek bir maç içinde tam 3 kez YAT (5 aynı zar) at!",
+    icon: "👑",
+    difficulty: "hard",
+    xp: 2000,
+    tokens: 1500,
+    cases: 3,
+    getProgress: p => ({ current: Math.min(p.maxYachtsInMatch || 0, 3), target: 3 }),
+  },
+];
+
+function getClaimableQuestCount(p: UserProfile): number {
+  const claimed = new Set(p.claimedQuests || []);
+  return QUEST_LIST.filter(q => {
+    if (claimed.has(q.id)) return false;
+    const prog = q.getProgress(p);
+    return prog.current >= prog.target;
+  }).length;
 }
 
 const COUNTRIES: { code: string; flag: string; name: string }[] = [
@@ -1855,6 +1971,7 @@ function GameScreen({
           const oppFinalTotal = myPlayerIndex === 1 ? t2 : t1;
           const myFinalBonus = myPlayerIndex === 1 ? (data.p1Bonus || 0) : (data.p2Bonus || 0);
           const oppFinalBonus = myPlayerIndex === 1 ? (data.p2Bonus || 0) : (data.p1Bonus || 0);
+          const myYachtsInMatch = myPlayerIndex === 1 ? (data.p1Yachts || (myFinalScores?.yacht === 50 ? 1 : 0)) : (data.p2Yachts || (myFinalScores?.yacht === 50 ? 1 : 0));
           const myReward = rewards ? rewards[myPlayerId] : { xp: 150, tokens: 40, cases: 0 };
           const won = myFinalTotal >= oppFinalTotal;
 
@@ -1866,6 +1983,9 @@ function GameScreen({
               level: computeLevel(newXp),
               tokens: prev.tokens + (myReward?.tokens || 0),
               cases: prev.cases + (myReward?.cases || 0),
+              upperBonusesWon: (prev.upperBonusesWon || 0) + (myFinalBonus > 0 ? 1 : 0),
+              totalYachts: (prev.totalYachts || 0) + myYachtsInMatch,
+              maxYachtsInMatch: Math.max(prev.maxYachtsInMatch || 0, myYachtsInMatch),
               stats: {
                 wins: prev.stats.wins + (won ? 1 : 0),
                 gamesPlayed: prev.stats.gamesPlayed + 1,
@@ -2683,10 +2803,300 @@ function ModeScreen({
 
 const TABS = [
   { id:"home",    Icon:Home,        label:"Anasayfa"   },
+  { id:"quests",  Icon:Trophy,      label:"Görevler"   },
   { id:"modes",   Icon:Zap,         label:"Oyna"       },
   { id:"friends", Icon:Users,       label:"Arkadaşlar" },
   { id:"shop",    Icon:ShoppingBag, label:"Koleksiyon" },
 ];
+
+// ─── Screen 7: Quests (Görev Modu — Normal & Zor Kasa Ödüllü Görevler) ──────
+function QuestsScreen({
+  dark, profile, setProfile, token
+}: {
+  dark: boolean;
+  profile: UserProfile;
+  setProfile: React.Dispatch<React.SetStateAction<UserProfile>>;
+  token: string | null;
+}) {
+  const c = C(dark);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [questCasePopup, setQuestCasePopup] = useState<{ title: string; xp: number; tokens: number; cases: number; bonusGold?: number } | null>(null);
+
+  const claimedSet = new Set(profile.claimedQuests || []);
+
+  const claimQuest = async (q: QuestItemDef) => {
+    if (claimingId || claimedSet.has(q.id)) return;
+    setClaimingId(q.id);
+    try {
+      if (token && !token.startsWith("guest_token_")) {
+        const res = await fetch(`${API_BASE}/quests/claim`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          },
+          body: JSON.stringify({ questId: q.id })
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          alert(txt || "Görev ödülü alınamadı");
+          return;
+        }
+        const data = await res.json();
+        const p = data.profile;
+        setProfile(prev => ({
+          ...prev,
+          xp: p.xp,
+          level: computeLevel(p.xp),
+          tokens: p.tokens,
+          cases: p.cases,
+          claimedQuests: p.claimedQuests || [...(prev.claimedQuests || []), q.id]
+        }));
+      } else {
+        setProfile(prev => {
+          const nextXp = prev.xp + q.xp;
+          return {
+            ...prev,
+            xp: nextXp,
+            level: computeLevel(nextXp),
+            tokens: prev.tokens + q.tokens,
+            cases: prev.cases + q.cases,
+            claimedQuests: [...(prev.claimedQuests || []), q.id]
+          };
+        });
+      }
+
+      if (q.cases > 0) {
+        setQuestCasePopup({ title: q.title, xp: q.xp, tokens: q.tokens, cases: q.cases });
+      }
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
+  const openBonusCaseNow = async () => {
+    if (!questCasePopup || profile.cases <= 0) {
+      setQuestCasePopup(null);
+      return;
+    }
+    if (token && !token.startsWith("guest_token_")) {
+      try {
+        const res = await fetch(`${API_BASE}/profile/open-case`, {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setProfile(prev => ({
+            ...prev,
+            cases: data.profile.cases,
+            tokens: data.profile.tokens
+          }));
+          setQuestCasePopup(prev => prev ? { ...prev, bonusGold: data.reward } : null);
+          return;
+        }
+      } catch (_) {}
+    }
+    const reward = Math.floor(Math.random() * 150) + 75;
+    setProfile(prev => ({
+      ...prev,
+      cases: Math.max(0, prev.cases - 1),
+      tokens: prev.tokens + reward
+    }));
+    setQuestCasePopup(prev => prev ? { ...prev, bonusGold: reward } : null);
+  };
+
+  const renderQuestCard = (q: QuestItemDef) => {
+    const prog = q.getProgress(profile);
+    const pct = Math.min(100, Math.round((prog.current / prog.target) * 100));
+    const isCompleted = prog.current >= prog.target;
+    const isClaimed = claimedSet.has(q.id);
+    const isHard = q.difficulty === "hard";
+
+    return (
+      <div
+        key={q.id}
+        style={{
+          background: isClaimed ? c.panelAlt : c.panel,
+          border: isHard
+            ? `1.5px solid ${isCompleted && !isClaimed ? c.gold : "rgba(201,168,76,0.32)"}`
+            : `1px solid ${isCompleted && !isClaimed ? c.accent : c.border}`,
+          borderRadius: 16,
+          padding: "14px 16px",
+          opacity: isClaimed ? 0.65 : 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          boxShadow: isCompleted && !isClaimed ? `0 6px 20px ${c.shadow}` : "none"
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12,
+              background: isHard ? c.goldBg : c.accentBg,
+              border: `1px solid ${isHard ? "rgba(201,168,76,0.4)" : c.accentRing}`,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0
+            }}>
+              {q.icon}
+            </div>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: c.text }}>{q.title}</span>
+                {isHard && (
+                  <span style={{ fontSize: 9, fontWeight: 900, background: c.gold, color: "#1a1405", padding: "2px 6px", borderRadius: 6, textTransform: "uppercase" }}>
+                    ZOR • KASA ÖDÜLLÜ
+                  </span>
+                )}
+              </div>
+              <p style={{ fontSize: 11, color: c.textSub, margin: "3px 0 0", lineHeight: 1.35 }}>{q.desc}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Ödül Rozetleri */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: c.accent, background: c.accentBg, padding: "4px 8px", borderRadius: 8 }}>
+              ✨ +{q.xp} XP
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: c.gold, background: c.goldBg, padding: "4px 8px", borderRadius: 8 }}>
+              🪙 +{q.tokens} Altın
+            </span>
+            {q.cases > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 800, color: "#f39c12", background: "rgba(243,156,18,0.14)", padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(243,156,18,0.35)" }}>
+                📦 +{q.cases} Kasa
+              </span>
+            )}
+          </div>
+
+          {isClaimed ? (
+            <span style={{ fontSize: 11, fontWeight: 800, color: c.accent, display: "flex", alignItems: "center", gap: 4 }}>
+              <Check size={14} /> Tamamlandı
+            </span>
+          ) : isCompleted ? (
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => claimQuest(q)}
+              disabled={claimingId === q.id}
+              style={{
+                background: isHard ? c.gold : c.accent,
+                color: isHard ? "#1a1405" : (dark ? c.bg : "#fff"),
+                border: "none", borderRadius: 10, padding: "8px 14px",
+                fontSize: 12, fontWeight: 900, cursor: "pointer",
+                boxShadow: `0 4px 14px ${isHard ? c.goldBg : c.accentBg}`
+              }}
+            >
+              {claimingId === q.id ? "Alınıyor..." : (q.cases > 0 ? "🎁 Ödül & Kasa Al" : "🎁 Ödülü Al")}
+            </motion.button>
+          ) : (
+            <span style={{ fontSize: 11, fontWeight: 700, color: c.textSub }}>
+              {prog.current} / {prog.target}
+            </span>
+          )}
+        </div>
+
+        {/* İlerleme Çubuğu */}
+        <div style={{ height: 5, background: c.bg, borderRadius: 99, overflow: "hidden" }}>
+          <div style={{
+            height: "100%",
+            width: `${pct}%`,
+            background: isHard ? c.gold : c.accent,
+            borderRadius: 99,
+            transition: "width 0.4s ease"
+          }} />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ minHeight: "100%", background: c.bg, fontFamily: "Inter,sans-serif", display: "flex", flexDirection: "column", paddingBottom: 32 }}>
+      <div style={{ padding: "28px 20px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>Görev Modu</h2>
+          <p style={{ fontSize: 12, color: c.textSub }}>Görevleri tamamla; XP, Altın ve Kasa kazan!</p>
+        </div>
+        <div style={{ background: c.accentBg, border: `1px solid ${c.accentRing}`, borderRadius: 14, padding: "8px 12px", textAlign: "center" }}>
+          <p style={{ fontSize: 14, fontWeight: 900, color: c.accent, margin: 0 }}>{claimedSet.size} / {QUEST_LIST.length}</p>
+          <p style={{ fontSize: 9, color: c.textSub, fontWeight: 700, margin: 0, textTransform: "uppercase" }}>Tamamlanan</p>
+        </div>
+      </div>
+
+      <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+            🎯 Normal Görevler (XP & Altın Ödüllü)
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {QUEST_LIST.filter(q => q.difficulty === "normal").map(renderQuestCard)}
+          </div>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 800, color: c.gold, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+            🔥 Zor & Efsanevi Görevler (XP + Altın + Sürpriz Kasa 📦)
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {QUEST_LIST.filter(q => q.difficulty === "hard").map(renderQuestCard)}
+          </div>
+        </div>
+      </div>
+
+      {/* Zor Görev Tamamlandığında Anında Kasa Açma Modalı */}
+      <AnimatePresence>
+        {questCasePopup && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 260, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(8px)" }}
+          >
+            <motion.div
+              initial={{ scale: 0.85, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.85, y: 20 }}
+              style={{
+                background: c.panel, borderRadius: 28, width: "100%", maxWidth: 340,
+                padding: "28px 24px", border: `2px solid ${c.gold}`,
+                boxShadow: `0 20px 60px ${c.goldBg}`, textAlign: "center",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 14
+              }}
+            >
+              <div style={{ fontSize: 68 }}>{questCasePopup.bonusGold ? "🪙" : "📦"}</div>
+              <h3 style={{ fontSize: 20, fontWeight: 900, color: c.gold, margin: 0 }}>
+                {questCasePopup.bonusGold ? `Kasadan +${questCasePopup.bonusGold} 🪙 Çıktı!` : "Zor Görev Kasası Kazandın!"}
+              </h3>
+              <p style={{ fontSize: 12, color: c.textSub, margin: 0, lineHeight: 1.45 }}>
+                <strong>{questCasePopup.title}</strong> görevinden <strong>+{questCasePopup.xp} XP</strong>, <strong>+{questCasePopup.tokens} 🪙</strong> ve <strong>{questCasePopup.cases} Kasa</strong> hesabına eklendi!
+              </p>
+
+              {!questCasePopup.bonusGold ? (
+                <div style={{ display: "flex", gap: 10, width: "100%", marginTop: 6 }}>
+                  <button
+                    onClick={() => setQuestCasePopup(null)}
+                    style={{ flex: 1, padding: "13px", borderRadius: 12, background: c.panelAlt, color: c.textSub, border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                  >
+                    Sonra Aç
+                  </button>
+                  <button
+                    onClick={openBonusCaseNow}
+                    style={{ flex: 1.4, padding: "13px", borderRadius: 12, background: c.gold, color: "#1a1405", border: "none", fontWeight: 900, fontSize: 13, cursor: "pointer" }}
+                  >
+                    📦 Kasayı Şimdi Aç!
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setQuestCasePopup(null)}
+                  style={{ width: "100%", padding: "14px", borderRadius: 14, background: c.accent, color: dark ? c.bg : "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", marginTop: 6 }}
+                >
+                  Harika, Devam Et
+                </button>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 // ─── Screen 6: Friends (Arkadaşlar & Oyun Davetleri) ─────────────────────────
 function FriendsScreen({
@@ -3071,6 +3481,10 @@ export default function App() {
           unlockedDice: (data.unlockedDice && data.unlockedDice.length > 0 ? data.unlockedDice : ["ivory"]) as DieMat[],
           loginStreak: data.loginStreak || 0,
           lastDailyReward: data.lastDailyReward || "",
+          upperBonusesWon: data.upperBonusesWon || 0,
+          totalYachts: data.totalYachts || 0,
+          maxYachtsInMatch: data.maxYachtsInMatch || 0,
+          claimedQuests: data.claimedQuests || [],
           stats: {
             wins: data.wins,
             gamesPlayed: data.gamesPlayed,
@@ -3174,6 +3588,7 @@ export default function App() {
   };
 
   const badgeCount = incomingRequests.length + gameInvites.length;
+  const claimableQuests = getClaimableQuestCount(profile);
 
   return (
     <div style={{ minHeight:"100dvh", background:dark?"#111318":"#dedad3", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -3320,6 +3735,14 @@ export default function App() {
                   }}
                 />
               )}
+              {screen==="quests" && (
+                <QuestsScreen
+                  dark={dark}
+                  profile={profile}
+                  setProfile={setProfile}
+                  token={token}
+                />
+              )}
               {screen==="friends" && (
                 <FriendsScreen
                   dark={dark} token={token}
@@ -3389,6 +3812,16 @@ export default function App() {
                         display: "flex", alignItems: "center", justifyContent: "center"
                       }}>
                         {badgeCount}
+                      </span>
+                    )}
+                    {id === "quests" && claimableQuests > 0 && (
+                      <span style={{
+                        position: "absolute", top: -4, right: -6,
+                        background: c.gold, color: "#1a1405", fontSize: 9, fontWeight: 900,
+                        width: 16, height: 16, borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        {claimableQuests}
                       </span>
                     )}
                   </div>

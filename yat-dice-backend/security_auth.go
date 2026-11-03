@@ -561,3 +561,123 @@ func getUserOnlineState(userID int) (online bool, inGame bool) {
 	return activeGames || seenRecently, activeGames
 }
 
+// ─── 6. GÖREV MODU (NORMAL & ZOR GÖREVLER — XP, ALTIN VE KASA ÖDÜLLÜ) ────────
+
+type questRewardDef struct {
+	xp     int
+	tokens int
+	cases  int
+	check  func(p ProfileData) bool
+}
+
+var questDefinitions = map[string]questRewardDef{
+	// Normal Görevler
+	"first_match": {
+		xp: 150, tokens: 75, cases: 0,
+		check: func(p ProfileData) bool { return p.Games >= 1 },
+	},
+	"upper_bonus_1": {
+		xp: 300, tokens: 150, cases: 0,
+		check: func(p ProfileData) bool { return p.UpperBonusesWon >= 1 },
+	},
+	"first_yacht": {
+		xp: 350, tokens: 200, cases: 0,
+		check: func(p ProfileData) bool { return p.TotalYachts >= 1 },
+	},
+	"wins_3": {
+		xp: 400, tokens: 250, cases: 0,
+		check: func(p ProfileData) bool { return p.Wins >= 3 },
+	},
+	// Zor Görevler (Altın + Kasa Ödüllü)
+	"score_220": {
+		xp: 600, tokens: 400, cases: 1,
+		check: func(p ProfileData) bool { return p.HighScore >= 220 },
+	},
+	"upper_bonus_3": {
+		xp: 750, tokens: 500, cases: 1,
+		check: func(p ProfileData) bool { return p.UpperBonusesWon >= 3 },
+	},
+	"double_yacht": {
+		xp: 1000, tokens: 750, cases: 2,
+		check: func(p ProfileData) bool { return p.MaxYachtsInMatch >= 2 },
+	},
+	"triple_yacht": {
+		xp: 2000, tokens: 1500, cases: 3,
+		check: func(p ProfileData) bool { return p.MaxYachtsInMatch >= 3 },
+	},
+}
+
+// POST /quests/claim : Tamamlanan görevin ödülünü (XP + Altın + Zor Görev Kasası) verir
+func handleClaimQuest(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
+
+	userID, err := getUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		QuestID string `json:"questId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		return
+	}
+
+	qDef, exists := questDefinitions[req.QuestID]
+	if !exists {
+		http.Error(w, "Geçersiz görev", http.StatusBadRequest)
+		return
+	}
+
+	p, err := fetchProfileByUserID(userID)
+	if err != nil {
+		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
+		return
+	}
+
+	for _, c := range p.ClaimedQuests {
+		if c == req.QuestID {
+			http.Error(w, "Bu görev ödülü zaten alındı", http.StatusConflict)
+			return
+		}
+	}
+
+	if !qDef.check(p) {
+		http.Error(w, "Görev şartları henüz tamamlanmadı", http.StatusBadRequest)
+		return
+	}
+
+	newClaimed := append(p.ClaimedQuests, req.QuestID)
+	claimedCSV := strings.Join(newClaimed, ",")
+
+	_, err = db.Exec(`
+		UPDATE profiles
+		SET xp = xp + $1,
+		    tokens = tokens + $2,
+		    cases = cases + $3,
+		    claimed_quests = $4
+		WHERE user_id = $5
+	`, qDef.xp, qDef.tokens, qDef.cases, claimedCSV, userID)
+	if err != nil {
+		http.Error(w, "Görev ödülü kaydedilemedi", http.StatusInternalServerError)
+		return
+	}
+
+	updated, _ := fetchProfileByUserID(userID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"questId":      req.QuestID,
+		"rewardXp":     qDef.xp,
+		"rewardTokens": qDef.tokens,
+		"rewardCases":  qDef.cases,
+		"profile":      updated,
+	})
+}
+
