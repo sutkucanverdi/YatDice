@@ -13,7 +13,9 @@ const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends";
 type DieVal  = 1 | 2 | 3 | 4 | 5 | 6;
-type DieMat  = "ivory" | "wood" | "marble" | "obsidian";
+type DieMat  = "ivory" | "wood" | "marble" | "obsidian" | "ruby" | "gold";
+type BetOption = 0 | 50 | 100 | 250 | 500;
+const BET_OPTIONS: BetOption[] = [0, 50, 100, 250, 500];
 
 interface FriendItem {
   friendshipId: number;
@@ -245,27 +247,37 @@ function generateRandomPositions() {
 }
 
 const MAT: Record<DieMat, {
-  face:string; edge:string; dot:string; spec:string; lockColor:string; name:string;
+  face:string; edge:string; dot:string; spec:string; lockColor:string; name:string; desc:string;
 }> = {
   ivory: {
     face: "linear-gradient(145deg, #fefdf8 0%, #f8f3e8 45%, #ede5d2 100%)",
     edge: "rgba(160,135,90,0.35)", dot: "#241c10", spec: "rgba(255,255,255,0.72)",
-    lockColor: "#4aada6", name: "Kemik",
+    lockColor: "#4aada6", name: "Kemik", desc: "Klasik fildişi dokulu dengeli zar seti.",
   },
   wood: {
     face: "linear-gradient(145deg, #d9b06c 0%, #c09050 45%, #9e7030 100%)",
     edge: "rgba(50,24,8,0.5)", dot: "#231006", spec: "rgba(255,210,130,0.45)",
-    lockColor: "#4aada6", name: "Ahşap",
+    lockColor: "#4aada6", name: "Ahşap", desc: "Sıcak ceviz ağacından oyulmuş zarif zar.",
   },
   marble: {
     face: "linear-gradient(145deg, #f6f4f8 0%, #e8e4f0 45%, #d4cee0 100%)",
     edge: "rgba(80,60,120,0.25)", dot: "#22183c", spec: "rgba(255,255,255,0.65)",
-    lockColor: "#7b5ea7", name: "Mermer",
+    lockColor: "#7b5ea7", name: "Mermer", desc: "Soğuk ve pürüzsüz İtalyan mermeri.",
   },
   obsidian: {
     face: "linear-gradient(145deg, #3e3c46 0%, #2a2830 45%, #1c1a22 100%)",
     edge: "rgba(255,255,255,0.06)", dot: "#ece8ff", spec: "rgba(160,145,220,0.3)",
-    lockColor: "#c9a84c", name: "Obsidyen",
+    lockColor: "#c9a84c", name: "Obsidyen", desc: "Volkanik siyah camdan keskin ve asil görünüm.",
+  },
+  ruby: {
+    face: "linear-gradient(145deg, #e74c3c 0%, #b02318 48%, #6e0f09 100%)",
+    edge: "rgba(255,140,140,0.35)", dot: "#fff5f5", spec: "rgba(255,190,190,0.5)",
+    lockColor: "#f5c842", name: "Kızıl Yakut", desc: "Parlak yakut kristali. Yüksek bahis masalarının favorisi.",
+  },
+  gold: {
+    face: "linear-gradient(145deg, #ffe680 0%, #d4af37 45%, #997312 100%)",
+    edge: "rgba(255,245,190,0.55)", dot: "#2a1c02", spec: "rgba(255,255,230,0.78)",
+    lockColor: "#4aada6", name: "Altın Kraliyet", desc: "24 ayar saf altın kaplama efsanevi koleksiyon zarı.",
   },
 };
 
@@ -751,12 +763,13 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
 
 // ─── Screen 1: Home ───────────────────────────────────────────────────────────
 function HomeScreen({
-  dark, toggle, profile, setProfile, isSearching, connectToServer, createdRoomCode, cancelMatchmaking, onLogout, token, profileLoaded, friends, onSendInvite
+  dark, toggle, profile, setProfile, isSearching, connectToServer, createdRoomCode, cancelMatchmaking, onLogout, token, profileLoaded, friends, onSendInvite, betAmount, setBetAmount
 }: {
   go:(s:Screen)=>void; dark:boolean; toggle:()=>void; profile:UserProfile; setProfile:React.Dispatch<React.SetStateAction<UserProfile>>;
   isSearching:boolean; connectToServer:(action:"QUICK_MATCH"|"BOT_MATCH"|"CREATE_ROOM"|"JOIN_ROOM", code?:string)=>void;
   createdRoomCode:string|null; cancelMatchmaking:()=>void; onLogout:()=>void; token:string|null; profileLoaded:boolean;
   friends:FriendItem[]; onSendInvite:(friendUserId:number, roomCode:string)=>void;
+  betAmount:BetOption; setBetAmount:(b:BetOption)=>void;
 }) {
   const c = C(dark);
   const [joinCode, setJoinCode] = useState("");
@@ -1006,6 +1019,45 @@ function HomeScreen({
              {profile.cases > 0 ? `${profile.cases} Kasa Açılmayı Bekliyor` : "Kasa Yok"}
            </span>
         </motion.button>
+      </div>
+
+      {/* BAHİS / MASA GİRİŞ ÜCRETİ SEÇİCİ */}
+      <div style={{ padding:"0 20px 14px" }}>
+        <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
+              💰 Masa Bahsi (Giriş)
+            </span>
+            <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
+              {betAmount === 0 ? "Ücretsiz Dostluk Maçı" : `Kazanan Alır: +${betAmount * 2} 🪙`}
+            </span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
+            {BET_OPTIONS.map(b => {
+              const active = betAmount === b;
+              const canAfford = profile.tokens >= b;
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  disabled={!canAfford || isSearching || createdRoomCode !== null}
+                  onClick={() => setBetAmount(b)}
+                  style={{
+                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800,
+                    cursor: (!canAfford || isSearching || createdRoomCode !== null) ? "not-allowed" : "pointer",
+                    background: active ? c.gold : c.panelAlt,
+                    color: active ? "#1a1405" : (canAfford ? c.text : c.textFaint),
+                    border: active ? `1.5px solid ${c.gold}` : `1px solid ${c.border}`,
+                    opacity: canAfford ? 1 : 0.45,
+                    transition: "0.15s"
+                  }}
+                >
+                  {b === 0 ? "Ücretsiz" : `🪙 ${b}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* OYUN MODLARI */}
@@ -1308,12 +1360,18 @@ function ShopScreen({
   const c = C(dark);
   const [rs, setRs] = useState<DieState[]>([2,5,3].map((v,i)=>initDie(v as DieVal, i)));
   const [rolling, setRolling] = useState(false);
+  const [previewDie, setPreviewDie] = useState<DieMat | null>(null);
+  const [previewState, setPreviewState] = useState<DieState>(initDie(6, 0));
+  const [previewRolling, setPreviewRolling] = useState(false);
+  const [buying, setBuying] = useState(false);
   
   const DICE_PRICES: Record<DieMat, number> = {
     ivory: 0,
     wood: 250,
     marble: 600,
-    obsidian: 1500
+    obsidian: 1500,
+    ruby: 2500,
+    gold: 4000,
   };
 
   const roll = () => {
@@ -1328,58 +1386,71 @@ function ShopScreen({
     setTimeout(()=>setRolling(false), 1000); 
   };
 
-  const handleDiceClick = async (d: DieMat) => {
-    const isUnlocked = profile.unlockedDice.includes(d);
-    const price = DICE_PRICES[d];
+  const rollPreview = () => {
+    if (previewRolling) return;
+    setPreviewRolling(true);
+    const v = (Math.floor(Math.random() * 6) + 1) as DieVal;
+    const t = targetRot(v, previewState.rx, previewState.ry);
+    setPreviewState(prev => ({ ...prev, value: v, rx: t.rx, ry: t.ry }));
+    setTimeout(() => setPreviewRolling(false), 850);
+  };
 
-    if (isUnlocked) {
-      setSel(d);
+  const equipDie = async (d: DieMat) => {
+    setSel(d);
+    if (token && !token.startsWith("guest_token_")) {
+      await fetch(`${API_BASE}/profile/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token
+        },
+        body: JSON.stringify({ selectedDice: d })
+      }).catch(() => {});
+    }
+  };
+
+  const handleDiceClick = (d: DieMat) => {
+    setPreviewState(initDie(6, 0));
+    setPreviewDie(d);
+  };
+
+  const confirmBuyDie = async (d: DieMat) => {
+    const price = DICE_PRICES[d];
+    if (profile.tokens < price || buying) return;
+    setBuying(true);
+    try {
       if (token && !token.startsWith("guest_token_")) {
-        await fetch(`${API_BASE}/profile/update`, {
+        const res = await fetch(`${API_BASE}/shop/buy`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
           },
-          body: JSON.stringify({ selectedDice: d })
-        }).catch(() => {});
-      }
-    } else {
-      if (profile.tokens >= price) {
-        if (window.confirm(`${MAT[d].name} zarını ${price} Jetona satın almak istiyor musun?`)) {
-          if (token && !token.startsWith("guest_token_")) {
-            const res = await fetch(`${API_BASE}/shop/buy`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer " + token
-              },
-              body: JSON.stringify({ dice: d })
-            });
-            if (!res.ok) {
-              const errTxt = await res.text();
-              alert(errTxt || "Satın alma başarısız!");
-              return;
-            }
-            const updated = await res.json();
-            setProfile(prev => ({
-              ...prev,
-              tokens: updated.tokens,
-              unlockedDice: updated.unlockedDice as DieMat[]
-            }));
-            setSel(d);
-          } else {
-            setProfile(prev => ({
-              ...prev,
-              tokens: prev.tokens - price,
-              unlockedDice: [...prev.unlockedDice, d]
-            }));
-            setSel(d);
-          }
+          body: JSON.stringify({ dice: d })
+        });
+        if (!res.ok) {
+          const errTxt = await res.text();
+          alert(errTxt || "Satın alma başarısız!");
+          return;
         }
+        const updated = await res.json();
+        setProfile(prev => ({
+          ...prev,
+          tokens: updated.tokens,
+          unlockedDice: updated.unlockedDice as DieMat[]
+        }));
+        await equipDie(d);
       } else {
-        alert("Yetersiz Jeton!");
+        setProfile(prev => ({
+          ...prev,
+          tokens: prev.tokens - price,
+          unlockedDice: [...prev.unlockedDice, d]
+        }));
+        setSel(d);
       }
+      setPreviewDie(null);
+    } finally {
+      setBuying(false);
     }
   };
 
@@ -1388,7 +1459,7 @@ function ShopScreen({
       <div style={{ display:"flex", alignItems:"center", gap:12, padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <div>
           <h2 style={{ fontSize:20, fontWeight:800, color:c.text }}>Koleksiyon</h2>
-          <p style={{ fontSize:12, color:c.textSub }}>Zarlarını yönet ve yenilerini al</p>
+          <p style={{ fontSize:12, color:c.textSub }}>Zara tıklayarak 3D incele ve koleksiyonuna kat</p>
         </div>
       </div>
 
@@ -1404,14 +1475,14 @@ function ShopScreen({
             border:`1px solid ${c.borderMid}`, borderRadius:10,
             color:dark?"#fff":c.text, fontSize:13, fontWeight:600, fontFamily:"Inter,sans-serif", cursor:rolling?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, position:"relative", zIndex:1, backdropFilter:"blur(5px)",
           }}>
-            <RotateCcw size={13}/> Zar At
+            <RotateCcw size={13}/> Seçili Zarı Dene ({MAT[sel].name})
           </button>
         </PremiumTray>
       </div>
 
       <div style={{ padding:"0 20px 32px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-           <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, margin:0 }}>Market</p>
+           <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, margin:0 }}>Zar Marketi (Büyük Görmek İçin Tıkla)</p>
            <div style={{ display:"flex", alignItems:"center", gap:4, background:c.goldBg, padding:"4px 10px", borderRadius:12 }}>
              <span style={{ fontSize:16 }}>🪙</span>
              <p style={{ fontSize:13, color:c.gold, fontWeight:800, margin:0 }}>{profile.tokens}</p>
@@ -1419,7 +1490,7 @@ function ShopScreen({
         </div>
         
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          {(["ivory","wood","marble","obsidian"] as DieMat[]).map(d=>{
+          {(["ivory","wood","marble","obsidian","ruby","gold"] as DieMat[]).map(d=>{
             const isUnlocked = profile.unlockedDice.includes(d);
             const price = DICE_PRICES[d];
             const canAfford = profile.tokens >= price;
@@ -1430,35 +1501,185 @@ function ShopScreen({
                 background: active?c.accentBg:c.panel,
                 border: active?`1.5px solid ${c.accent}`:`1px solid ${c.border}`,
                 borderRadius:14, padding:"14px", cursor:"pointer",
-                display:"flex", alignItems:"center", gap:12, opacity:(!isUnlocked && !canAfford)?0.6:1, position:"relative",
+                display:"flex", alignItems:"center", gap:12, position:"relative",
               }}>
                 <Die3D state={initDie(5)} size={44} locked={false} mat={d}/>
-                <div>
-                  <p style={{ fontSize:13, fontWeight:600, color:c.text }}>{MAT[d].name}</p>
-                  {isUnlocked
-                    ? <p style={{ fontSize:10, color:c.textSub, marginTop:2 }}>Sahipsin</p>
-                    : <p style={{ fontSize:11, color:canAfford?c.gold:c.danger, marginTop:2, fontWeight:700 }}>🪙 {price}</p>
-                  }
+                <div style={{ flex:1 }}>
+                  <p style={{ fontSize:13, fontWeight:700, color:c.text, margin:0 }}>{MAT[d].name}</p>
+                  {isUnlocked ? (
+                    <p style={{ fontSize:10, color:active?c.accent:c.textSub, marginTop:3, fontWeight:600 }}>
+                      {active ? "✓ Kullanımda" : "Sahipsin (İncele)"}
+                    </p>
+                  ) : (
+                    <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
+                      <span style={{ fontSize:11, color:canAfford?c.gold:c.danger, fontWeight:800 }}>🪙 {price}</span>
+                      <span style={{ fontSize:9, background:c.panelAlt, color:c.textSub, padding:"2px 6px", borderRadius:6, fontWeight:700 }}>İncele / Al</span>
+                    </div>
+                  )}
                 </div>
                 {active&&<div style={{ position:"absolute", top:8, right:8, width:18, height:18, borderRadius:"50%", background:c.accent, display:"flex", alignItems:"center", justifyContent:"center" }}><Check size={10} color="#fff" strokeWidth={3}/></div>}
+                {!isUnlocked&&<div style={{ position:"absolute", top:8, right:8, color:c.textFaint }}><Lock size={12}/></div>}
               </motion.div>
             );
           })}
         </div>
       </div>
+
+      {/* BÜYÜK 3D ZAR ÖNİZLEME VE SATIN ALMA MODALI */}
+      <AnimatePresence>
+        {previewDie && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setPreviewDie(null)}
+            style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", zIndex: 250,
+              display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(8px)"
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.85, y: 25 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.85, y: 25 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: c.panel, borderRadius: 28, width: "100%", maxWidth: 350,
+                padding: "24px 22px", border: `1.5px solid ${c.borderMid}`,
+                boxShadow: `0 24px 64px rgba(0,0,0,0.6)`, display: "flex", flexDirection: "column", alignItems: "center", gap: 16
+              }}
+            >
+              <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: c.accent, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  3D Zar İnceleme
+                </span>
+                <button onClick={() => setPreviewDie(null)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Büyük 3D Dönen Zar Sahnesi */}
+              <div style={{
+                width: "100%", height: 185, borderRadius: 22,
+                background: c.trayFelt, border: `6px solid ${c.trayOuter}`,
+                boxShadow: "inset 0 10px 28px rgba(0,0,0,0.55)",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                position: "relative", overflow: "hidden"
+              }}>
+                <Die3D
+                  state={previewState}
+                  size={96}
+                  locked={false}
+                  mat={previewDie}
+                  isRolling={previewRolling}
+                  isIdle={!previewRolling}
+                  onClick={rollPreview}
+                />
+                <button
+                  type="button"
+                  onClick={rollPreview}
+                  style={{
+                    position: "absolute", bottom: 10, right: 10,
+                    background: "rgba(0,0,0,0.55)", color: "#fff",
+                    border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10,
+                    padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 5
+                  }}
+                >
+                  <RotateCcw size={12} /> Zarı At
+                </button>
+              </div>
+
+              <div style={{ textAlign: "center" }}>
+                <h3 style={{ fontSize: 22, fontWeight: 900, color: c.text, margin: 0 }}>{MAT[previewDie].name} Zarı</h3>
+                <p style={{ fontSize: 12, color: c.textSub, margin: "6px 0 0", lineHeight: 1.45 }}>
+                  {MAT[previewDie].desc}
+                </p>
+              </div>
+
+              {profile.unlockedDice.includes(previewDie) ? (
+                <div style={{ display: "flex", gap: 10, width: "100%", marginTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDie(null)}
+                    style={{
+                      flex: 1, padding: "14px", borderRadius: 14,
+                      background: c.panelAlt, color: c.textSub,
+                      border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer"
+                    }}
+                  >
+                    Kapat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { equipDie(previewDie); setPreviewDie(null); }}
+                    style={{
+                      flex: 1.4, padding: "14px", borderRadius: 14,
+                      background: c.accent, color: dark ? c.bg : "#fff",
+                      border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer"
+                    }}
+                  >
+                    {sel === previewDie ? "✓ Seçili Zar" : "Kuşan / Seç"}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div style={{
+                    width: "100%", background: c.goldBg, border: `1px solid ${c.gold}40`,
+                    borderRadius: 14, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center"
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: c.textSub }}>Satın Alma Fiyatı:</span>
+                    <span style={{ fontSize: 16, fontWeight: 900, color: c.gold }}>🪙 {DICE_PRICES[previewDie]} Jeton</span>
+                  </div>
+
+                  {profile.tokens < DICE_PRICES[previewDie] && (
+                    <p style={{ fontSize: 11, fontWeight: 700, color: c.danger, margin: "-4px 0 0" }}>
+                      Bu zarı almak için {DICE_PRICES[previewDie] - profile.tokens} 🪙 daha gerekiyor.
+                    </p>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, width: "100%", marginTop: 2 }}>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewDie(null)}
+                      style={{
+                        flex: 1, padding: "14px", borderRadius: 14,
+                        background: c.panelAlt, color: c.text,
+                        border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer"
+                      }}
+                    >
+                      Alma (Vazgeç)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={profile.tokens < DICE_PRICES[previewDie] || buying}
+                      onClick={() => confirmBuyDie(previewDie)}
+                      style={{
+                        flex: 1.4, padding: "14px", borderRadius: 14,
+                        background: profile.tokens >= DICE_PRICES[previewDie] ? c.gold : c.panelAlt,
+                        color: profile.tokens >= DICE_PRICES[previewDie] ? "#1a1405" : c.textFaint,
+                        border: "none", fontWeight: 900, fontSize: 14,
+                        cursor: profile.tokens >= DICE_PRICES[previewDie] ? "pointer" : "not-allowed"
+                      }}
+                    >
+                      {buying ? "Alınıyor..." : `Satın Al (🪙 ${DICE_PRICES[previewDie]})`}
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 
-// ─── Screen 3: Game (Server-Authoritative + Turn Timer + Emojis) ──────────────
+// ─── Screen 3: Game (Server-Authoritative + Turn Timer + Emojis + Wager) ─────
 function GameScreen({
-  go, dark, diceMat, profile, setProfile, ws, myPlayerIndex, opponentName, onMatchEnd
+  go, dark, diceMat, profile, setProfile, ws, myPlayerIndex, opponentName, onMatchEnd, activeBet
 }: {
   go:(s:Screen)=>void; dark:boolean; diceMat:DieMat; profile:UserProfile;
   setProfile:React.Dispatch<React.SetStateAction<UserProfile>>;
   ws:WebSocket|null; myPlayerIndex:number; opponentName:string;
-  onMatchEnd:(summary: MatchSummary)=>void;
+  onMatchEnd:(summary: MatchSummary)=>void; activeBet:number;
 }) {
   const c = C(dark);
 
@@ -1695,9 +1916,14 @@ function GameScreen({
               <Av seed={profile.seed} size={32} active={isMyTurn} dark={dark}/>
               <p style={{fontSize:10, fontWeight:"bold", color:isMyTurn?c.accent:c.text}}>{profile.name} ({myPlayerIndex === 1 ? p1Total : p2Total})</p>
            </div>
-           {/* TUR VE SÜRE BİLGİSİ */}
-           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
+           {/* TUR, BAHİS VE SÜRE BİLGİSİ */}
+           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
               <span style={{ fontSize: 10, color: c.textSub, fontWeight: "bold", textTransform: "uppercase" }}>TUR {round}/13</span>
+              {activeBet > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 800, color: c.gold, background: c.goldBg, padding: "2px 8px", borderRadius: 10, border: `1px solid ${c.gold}40` }}>
+                  💰 Ödül: {activeBet * 2} 🪙
+                </span>
+              )}
               <span style={{ fontSize: 11, fontWeight: 800, color: turnTimeLeft <= 8 ? c.danger : c.accent }}>⏱ {turnTimeLeft}s</span>
            </div>
            {/* SAĞ OYUNCU (HER ZAMAN RAKİP) */}
@@ -2079,7 +2305,12 @@ function ResultScreen({
 
 
 // ─── Screen 5: Modes ──────────────────────────────────────────────────────────
-function ModeScreen({ dark, onSelectMode }: { dark:boolean; onSelectMode:(mode: "QUICK_MATCH" | "BOT_MATCH")=>void }) {
+function ModeScreen({
+  dark, onSelectMode, betAmount, setBetAmount, tokens
+}: {
+  dark:boolean; onSelectMode:(mode: "QUICK_MATCH" | "BOT_MATCH")=>void;
+  betAmount:BetOption; setBetAmount:(b:BetOption)=>void; tokens:number;
+}) {
   const c = C(dark);
 
   const modes: { key: string; label: string; sub: string; icon: string; available: boolean; action?: "QUICK_MATCH" | "BOT_MATCH" }[] = [
@@ -2105,14 +2336,52 @@ function ModeScreen({ dark, onSelectMode }: { dark:boolean; onSelectMode:(mode: 
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
       <div style={{ padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <h2 style={{ fontSize:22, fontWeight:800, color:c.text, marginBottom:4 }}>Mod Seç</h2>
-        <p style={{ fontSize:12, color:c.textSub }}>Nasıl oynamak istersin?</p>
+        <p style={{ fontSize:12, color:c.textSub }}>Bahsini seç ve maça başla</p>
       </div>
 
       {/* Üstte dekoratif dönen 3D zarlar - uygun boşluklarla hizalandı */}
-      <div style={{ padding:"22px 20px 8px", display:"flex", justifyContent:"center", gap:12 }}>
+      <div style={{ padding:"18px 20px 10px", display:"flex", justifyContent:"center", gap:12 }}>
         {([2,4,6,1,3] as DieVal[]).map((v,i)=>(
           <Die3D key={i} index={i} state={initDie(v,i)} size={40} locked={false} mat="ivory" isIdle={true}/>
         ))}
+      </div>
+
+      {/* Mod Ekranı Bahis Seçici */}
+      <div style={{ padding:"6px 20px 4px" }}>
+        <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
+              💰 Masa Bahsi
+            </span>
+            <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
+              {betAmount === 0 ? "Ücretsiz" : `Ödül Havuzu: ${betAmount * 2} 🪙`}
+            </span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
+            {BET_OPTIONS.map(b => {
+              const active = betAmount === b;
+              const canAfford = tokens >= b;
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  disabled={!canAfford}
+                  onClick={() => setBetAmount(b)}
+                  style={{
+                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800,
+                    cursor: !canAfford ? "not-allowed" : "pointer",
+                    background: active ? c.gold : c.panelAlt,
+                    color: active ? "#1a1405" : (canAfford ? c.text : c.textFaint),
+                    border: active ? `1.5px solid ${c.gold}` : `1px solid ${c.border}`,
+                    opacity: canAfford ? 1 : 0.45,
+                  }}
+                >
+                  {b === 0 ? "Ücretsiz" : `🪙 ${b}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <div style={{ padding:"16px 20px 28px", display:"flex", flexDirection:"column", gap:12, flex:1 }}>
@@ -2426,6 +2695,8 @@ export default function App() {
   const [myPlayerIndex, setMyPlayerIndex] = useState<number>(1);
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null);
   const [opponentName, setOpponentName] = useState<string>("Rakip");
+  const [betAmount, setBetAmount] = useState<BetOption>(50);
+  const [activeBet, setActiveBet] = useState<number>(0);
 
   // Arkadaş ve Oyun Daveti State'leri
   const [friends, setFriends] = useState<FriendItem[]>([]);
@@ -2600,6 +2871,7 @@ export default function App() {
 
   const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number) => {
     if (isSearching) return;
+    const effectiveBet: BetOption = profile.tokens >= betAmount ? betAmount : 0;
     if (ws) {
       ws.close();
     }
@@ -2609,7 +2881,7 @@ export default function App() {
     const socket = new WebSocket(wsUrl);
     
     socket.onopen = () => {
-      socket.send(JSON.stringify({ action: action, roomCode: roomCode, username: profile.name }));
+      socket.send(JSON.stringify({ action: action, roomCode: roomCode, username: profile.name, betAmount: effectiveBet }));
     };
 
     socket.onmessage = (event) => {
@@ -2623,6 +2895,14 @@ export default function App() {
         }
       }
       else if (data.type === "MATCH_FOUND") {
+        const matchBet = typeof data.betAmount === "number" ? data.betAmount : effectiveBet;
+        setActiveBet(matchBet);
+        if (matchBet > 0) {
+          setProfile(prev => ({
+            ...prev,
+            tokens: Math.max(0, prev.tokens - matchBet)
+          }));
+        }
         setMyPlayerIndex(data.playerIndex);
         setOpponentName(data.opponentName || "Rakip");
         setIsSearching(false);
@@ -2786,11 +3066,15 @@ export default function App() {
                   createdRoomCode={createdRoomCode} cancelMatchmaking={cancelMatchmaking}
                   onLogout={handleLogout} token={token} profileLoaded={profileLoaded}
                   friends={friends} onSendInvite={sendGameInvite}
+                  betAmount={betAmount} setBetAmount={setBetAmount}
                 />
               )}
               {screen==="modes" && (
                 <ModeScreen
                   dark={dark}
+                  betAmount={betAmount}
+                  setBetAmount={setBetAmount}
+                  tokens={profile.tokens}
                   onSelectMode={(mode) => {
                     setScreen("home");
                     connectToServer(mode);
@@ -2824,6 +3108,7 @@ export default function App() {
                   profile={profile} setProfile={setProfile}
                   ws={ws} myPlayerIndex={myPlayerIndex}
                   opponentName={opponentName} onMatchEnd={setMatchSummary}
+                  activeBet={activeBet}
                 />
               )}
               {screen==="result" && (

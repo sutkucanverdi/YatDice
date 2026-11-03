@@ -43,6 +43,22 @@ var dicePrices = map[string]int{
 	"wood":     250,
 	"marble":   600,
 	"obsidian": 1500,
+	"ruby":     2500,
+	"gold":     4000,
+}
+
+var allowedBets = map[int]bool{
+	0: true, 50: true, 100: true, 250: true, 500: true,
+}
+
+func normalizeBet(raw interface{}) int {
+	if f, ok := raw.(float64); ok {
+		b := int(f)
+		if allowedBets[b] {
+			return b
+		}
+	}
+	return 0
 }
 
 var upgrader = websocket.Upgrader{
@@ -60,12 +76,13 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	ID       string
-	UserID   int // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
-	Conn     *websocket.Conn
-	WriteMu  sync.Mutex // Concurrent websocket write panic önleyici
-	Room     *Room
-	Username string
+	ID        string
+	UserID    int // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
+	Conn      *websocket.Conn
+	WriteMu   sync.Mutex // Concurrent websocket write panic önleyici
+	Room      *Room
+	Username  string
+	BetAmount int
 }
 
 // WriteJSON güvenli (thread-safe) WebSocket mesaj gönderimi sağlar
@@ -81,6 +98,7 @@ func (c *Client) WriteJSON(v interface{}) error {
 
 type PrivateRoomEntry struct {
 	Host      *Client
+	BetAmount int
 	CreatedAt time.Time
 }
 
@@ -89,6 +107,7 @@ type Room struct {
 	Player1       *Client
 	Player2       *Client
 	IsBotMatch    bool
+	BetAmount     int        // Bahis miktarı (her oyuncudan kesilen giriş ücreti; kazanan 2x alır)
 	Mu            sync.Mutex // Oda içi oyun durumu kilidi (Global mutex darboğazını önler)
 	Turn          string     // "p1" veya "p2"
 	Round         int        // 1..13
@@ -310,6 +329,19 @@ func computeTotalAndBonus(scores map[string]int) (total int, upper int, bonus in
 	return total, upper, bonus
 }
 
+// Bahis miktarını veritabanından atomik olarak düşer (yeterli bakiyesi yoksa false döner)
+func deductBetDB(userID int, bet int) bool {
+	if bet <= 0 || userID <= 0 {
+		return true
+	}
+	res, err := db.Exec(`UPDATE profiles SET tokens = tokens - $1 WHERE user_id = $2 AND tokens >= $1`, bet, userID)
+	if err != nil {
+		return false
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0
+}
+
 // Veritabanında maç sonu ödüllerini güvenli şekilde günceller
 func awardMatchResultDB(userID int, won bool, score int, xpGain int, tokenGain int, caseGain int) {
 	if userID <= 0 {
@@ -492,11 +524,11 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 
 		p1XP, p1Tokens, p1Cases := 150, 40, 0
 		if p1Won {
-			p1XP, p1Tokens, p1Cases = 300, 100, 1
+			p1XP, p1Tokens, p1Cases = 300, 100+(r.BetAmount*2), 1
 		}
 		p2XP, p2Tokens, p2Cases := 150, 40, 0
 		if p2Won {
-			p2XP, p2Tokens, p2Cases = 300, 100, 1
+			p2XP, p2Tokens, p2Cases = 300, 100+(r.BetAmount*2), 1
 		}
 
 		if r.Player1 != nil {
@@ -506,9 +538,10 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 			awardMatchResultDB(r.Player2.UserID, p2Won, p2Total, p2XP, p2Tokens, p2Cases)
 		}
 
+		msg["betAmount"] = r.BetAmount
 		msg["rewards"] = map[string]interface{}{
-			"p1": map[string]int{"xp": p1XP, "tokens": p1Tokens, "cases": p1Cases},
-			"p2": map[string]int{"xp": p2XP, "tokens": p2Tokens, "cases": p2Cases},
+			"p1": map[string]int{"xp": p1XP, "tokens": p1Tokens, "cases": p1Cases, "betPot": r.BetAmount * 2},
+			"p2": map[string]int{"xp": p2XP, "tokens": p2Tokens, "cases": p2Cases, "betPot": r.BetAmount * 2},
 		}
 	}
 
@@ -805,12 +838,13 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if opponent != nil {
-					awardMatchResultDB(opponent.UserID, true, 0, 150, 50, 0)
+					forfeitTokens := 50 + (room.BetAmount * 2)
+					awardMatchResultDB(opponent.UserID, true, 0, 150, forfeitTokens, 0)
 					_ = opponent.WriteJSON(map[string]interface{}{
 						"type": "OPPONENT_LEFT",
 						"reward": map[string]int{
 							"xp":     150,
-							"tokens": 50,
+							"tokens": forfeitTokens,
 						},
 					})
 					opponent.Room = nil
@@ -846,7 +880,15 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			requestedBet := normalizeBet(msg["betAmount"])
+			client.BetAmount = requestedBet
+
 			if action == "BOT_MATCH" {
+				if !deductBetDB(client.UserID, requestedBet) {
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Seçilen bahis için yeterli jetonunuz yok!"})
+					mu.Unlock()
+					continue
+				}
 				// Bota karşı anında tek oyunculu maç başlat
 				if waitingClient == client {
 					waitingClient = nil
@@ -855,6 +897,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				roomID := fmt.Sprintf("BOT-ROOM-%d", roomCounter)
 				room := newRoom(roomID, client, nil)
 				room.IsBotMatch = true
+				room.BetAmount = requestedBet
 				client.Room = room
 
 				_ = client.WriteJSON(map[string]interface{}{
@@ -863,6 +906,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					"playerIndex":  1,
 					"opponentName": "🤖 YatBot",
 					"turnSeconds":  TurnDurationSeconds,
+					"betAmount":    requestedBet,
 				})
 
 			} else if action == "QUICK_MATCH" {
@@ -872,11 +916,19 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					_ = client.WriteJSON(map[string]interface{}{"type": "WAITING_FOR_OPPONENT"})
 				} else {
 					opponent := waitingClient
+					matchBet := opponent.BetAmount
+					if requestedBet < matchBet {
+						matchBet = requestedBet
+					}
+					if !deductBetDB(opponent.UserID, matchBet) || !deductBetDB(client.UserID, matchBet) {
+						matchBet = 0
+					}
 					waitingClient = nil
 
 					roomCounter++
 					roomID := fmt.Sprintf("ROOM-%d", roomCounter)
 					room := newRoom(roomID, opponent, client)
+					room.BetAmount = matchBet
 					opponent.Room = room
 					client.Room = room
 
@@ -886,6 +938,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"playerIndex":  1,
 						"opponentName": client.Username,
 						"turnSeconds":  TurnDurationSeconds,
+						"betAmount":    matchBet,
 					})
 					_ = client.WriteJSON(map[string]interface{}{
 						"type":         "MATCH_FOUND",
@@ -893,6 +946,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"playerIndex":  2,
 						"opponentName": opponent.Username,
 						"turnSeconds":  TurnDurationSeconds,
+						"betAmount":    matchBet,
 					})
 				}
 
@@ -904,8 +958,8 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				code := generateUniqueRoomCode()
-				privateRooms[code] = PrivateRoomEntry{Host: client, CreatedAt: time.Now()}
-				_ = client.WriteJSON(map[string]interface{}{"type": "ROOM_CREATED", "roomCode": code})
+				privateRooms[code] = PrivateRoomEntry{Host: client, BetAmount: requestedBet, CreatedAt: time.Now()}
+				_ = client.WriteJSON(map[string]interface{}{"type": "ROOM_CREATED", "roomCode": code, "betAmount": requestedBet})
 
 			} else if action == "JOIN_ROOM" {
 				// Güvenli tip dönüşümü (Panic önleyici)
@@ -919,12 +973,17 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				entry, exists := privateRooms[code]
 
 				if exists && entry.Host != nil && entry.Host != client {
+					matchBet := entry.BetAmount
+					if !deductBetDB(entry.Host.UserID, matchBet) || !deductBetDB(client.UserID, matchBet) {
+						matchBet = 0
+					}
 					delete(privateRooms, code)
 					host := entry.Host
 
 					roomCounter++
 					roomID := fmt.Sprintf("ROOM-%d", roomCounter)
 					room := newRoom(roomID, host, client)
+					room.BetAmount = matchBet
 					host.Room = room
 					client.Room = room
 
@@ -934,6 +993,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"playerIndex":  1,
 						"opponentName": client.Username,
 						"turnSeconds":  TurnDurationSeconds,
+						"betAmount":    matchBet,
 					})
 					_ = client.WriteJSON(map[string]interface{}{
 						"type":         "MATCH_FOUND",
@@ -941,6 +1001,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"playerIndex":  2,
 						"opponentName": host.Username,
 						"turnSeconds":  TurnDurationSeconds,
+						"betAmount":    matchBet,
 					})
 				} else {
 					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Oda bulunamadı veya kendi odanıza katılamazsınız!"})
