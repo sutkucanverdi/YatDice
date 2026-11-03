@@ -396,94 +396,306 @@ function PremiumTray({ children, dark }: { children:React.ReactNode; dark:boolea
 
 
 // -----------------------------------------------------------
-// KAYIT OL / GİRİŞ YAP EKRANI
+// KAYIT OL / GİRİŞ YAP / ŞİFRE SIFIRLAMA / GOOGLE & KALICI MİSAFİR EKRANI
 // -----------------------------------------------------------
+function getOrCreateDeviceId(): string {
+  let devId = localStorage.getItem("yatzy_device_id");
+  if (!devId) {
+    devId = "dev_" + Math.random().toString(36).substring(2, 12) + "_" + Date.now().toString(36);
+    localStorage.setItem("yatzy_device_id", devId);
+  }
+  return devId;
+}
+
 function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: string) => void, dark: boolean }) {
   const c = C(dark);
-  const [isLogin, setIsLogin] = useState(true);
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState("");
+  const [googleName, setGoogleName] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setInfoMsg("");
     setLoading(true);
 
-    const endpoint = isLogin ? "/login" : "/register";
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password })
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || "Bir hata oluştu");
-      }
-      if (isLogin) {
+      if (authMode === "login" || authMode === "register") {
+        const endpoint = authMode === "login" ? "/login" : "/register";
+        const res = await fetch(`${API_BASE}${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password, email })
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || "Bir hata oluştu");
+        }
+        if (authMode === "login") {
+          const data = await res.json();
+          onLogin(data.username, data.token);
+        } else {
+          setInfoMsg("🎉 Kayıt başarılı! Şimdi giriş yapabilirsiniz.");
+          setAuthMode("login");
+          setPassword("");
+        }
+      } else if (authMode === "forgot") {
+        const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, email })
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || "Kod oluşturulamadı");
+        }
         const data = await res.json();
-        onLogin(data.username, data.token);
-      } else {
-        alert("🎉 Kayıt başarılı! Şimdi giriş yapabilirsiniz.");
-        setIsLogin(true);
+        if (data.resetCode) {
+          setResetCode(data.resetCode);
+          setInfoMsg(`Doğrulama kodunuz oluşturuldu: ${data.resetCode}`);
+        } else {
+          setInfoMsg(data.message || "Doğrulama kodu gönderildi.");
+        }
+        setAuthMode("reset");
+      } else if (authMode === "reset") {
+        const res = await fetch(`${API_BASE}/auth/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, resetCode, newPassword })
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || "Şifre sıfırlanamadı");
+        }
+        setInfoMsg("✅ Şifreniz başarıyla sıfırlandı! Giriş yapabilirsiniz.");
         setPassword("");
+        setNewPassword("");
+        setAuthMode("login");
       }
-    } catch (err: any) { setError(err.message); } finally { setLoading(false); }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGuestLogin = () => {
-    const guestName = "Misafir_" + Math.floor(Math.random() * 10000);
-    onLogin(guestName, "guest_token_" + Date.now());
+  // Aynı cihazda her zaman aynı Misafir hesabına bağlanır (Veritabanı + LocalStorage yedekli)
+  const handleGuestLogin = async () => {
+    setError("");
+    setLoading(true);
+    const deviceId = getOrCreateDeviceId();
+    try {
+      const res = await fetch(`${API_BASE}/auth/guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("yatzy_guest_name", data.username);
+        onLogin(data.username, data.token);
+        return;
+      }
+    } catch (_) {
+      // Sunucu kapalıysa yerel kalıcı misafir kimliğini kullan
+    } finally {
+      setLoading(false);
+    }
+    let savedGuestName = localStorage.getItem("yatzy_guest_name");
+    if (!savedGuestName) {
+      savedGuestName = "Misafir_" + Math.floor(1000 + Math.random() * 9000);
+      localStorage.setItem("yatzy_guest_name", savedGuestName);
+    }
+    onLogin(savedGuestName, "guest_token_" + deviceId);
+  };
+
+  const handleGoogleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!googleEmail.trim()) return;
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: googleEmail.trim(),
+          name: googleName.trim() || googleEmail.split("@")[0],
+          googleId: "gid_" + googleEmail.trim().toLowerCase()
+        })
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Google girişi başarısız");
+      }
+      const data = await res.json();
+      setShowGoogleModal(false);
+      onLogin(data.username, data.token);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:"Inter,sans-serif" }}>
-      <div style={{ display:"flex", justifyContent:"center", gap:8, marginBottom: 32 }}>
+      <div style={{ display:"flex", justifyContent:"center", gap:8, marginBottom: 24 }}>
         {([3,1,5,2,4] as DieVal[]).map((v,i)=>(
           <motion.div key={i} initial={{ y: -50, opacity: 0, rotate: -180 }} animate={{ y: 0, opacity: 1, rotate: 0 }} transition={{ delay: i * 0.1, type: "spring", stiffness: 200, damping: 15 }}>
-            <Die3D index={i} state={initDie(v, i)} size={40} locked={false} mat="ivory"/>
+            <Die3D index={i} state={initDie(v, i)} size={38} locked={false} mat="ivory"/>
           </motion.div>
         ))}
       </div>
 
-      <div style={{ textAlign:"center", marginBottom:32 }}>
-        <h1 style={{ fontSize:36, fontWeight:900, letterSpacing:"-0.02em", margin:0 }}>
+      <div style={{ textAlign:"center", marginBottom:22 }}>
+        <h1 style={{ fontSize:34, fontWeight:900, letterSpacing:"-0.02em", margin:0 }}>
           Yat <span style={{ color:c.accent }}>Dice</span>
         </h1>
-        <p style={{ fontSize:13, color:c.textSub, marginTop:8 }}>
-          {isLogin ? "Hesabınıza giriş yapın" : "Yeni bir hesap oluşturun"}
+        <p style={{ fontSize:13, color:c.textSub, marginTop:6 }}>
+          {authMode === "login" && "Hesabınıza giriş yapın"}
+          {authMode === "register" && "Yeni bir hesap oluşturun"}
+          {authMode === "forgot" && "Şifre sıfırlama kodu alın"}
+          {authMode === "reset" && "Yeni şifrenizi belirleyin"}
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:16, background:c.panel, padding:24, borderRadius:24, border:`1px solid ${c.border}`, boxShadow:`0 8px 32px ${c.shadow}` }}>
+      <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:13, background:c.panel, padding:22, borderRadius:24, border:`1px solid ${c.border}`, boxShadow:`0 8px 32px ${c.shadow}` }}>
         <div>
           <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>Kullanıcı Adı</label>
-          <input type="text" value={username} onChange={e => setUsername(e.target.value)} required placeholder="Örn: Utku" style={{ width:"100%", boxSizing:"border-box", padding:"14px 16px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:15, outline:"none", fontWeight:600 }} />
+          <input type="text" value={username} onChange={e => setUsername(e.target.value)} required placeholder="Örn: Utku" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
         </div>
-        <div>
-          <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>Şifre</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" style={{ width:"100%", boxSizing:"border-box", padding:"14px 16px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:15, outline:"none", fontWeight:600 }} />
-        </div>
+
+        {(authMode === "register" || authMode === "forgot") && (
+          <div>
+            <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>
+              E-posta {authMode === "register" ? "(Şifre kurtarma için önerilir)" : "(Kayıtlıysa girin)"}
+            </label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="ornek@gmail.com" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
+          </div>
+        )}
+
+        {(authMode === "login" || authMode === "register") && (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub }}>Şifre</label>
+              {authMode === "login" && (
+                <button type="button" onClick={() => { setAuthMode("forgot"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.accent, fontSize:11, fontWeight:700, cursor:"pointer", padding:0 }}>
+                  Şifremi Unuttum?
+                </button>
+              )}
+            </div>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
+          </div>
+        )}
+
+        {authMode === "reset" && (
+          <>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>6 Haneli Sıfırlama Kodu</label>
+              <input type="text" value={resetCode} onChange={e => setResetCode(e.target.value)} required placeholder="123456" maxLength={6} style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.accent, fontSize:16, letterSpacing:4, outline:"none", fontWeight:800 }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>Yeni Şifre (En az 6 karakter)</label>
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required placeholder="••••••••" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
+            </div>
+          </>
+        )}
 
         {error && (
           <div style={{ color:"#ff4757", fontSize:12, fontWeight:700, textAlign:"center", background:"rgba(255, 71, 87, 0.1)", padding:"10px", borderRadius:8 }}>{error}</div>
         )}
+        {infoMsg && (
+          <div style={{ color:c.accent, fontSize:12, fontWeight:700, textAlign:"center", background:c.accentBg, padding:"10px", borderRadius:8, border:`1px solid ${c.accentRing}` }}>{infoMsg}</div>
+        )}
 
-        <motion.button whileTap={!loading ? {scale:0.97} : {}} disabled={loading} type="submit" style={{ padding:"16px", marginTop:8, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", fontWeight:800, fontSize:15, cursor:loading?"not-allowed":"pointer", opacity:loading?0.7:1, display:"flex", justifyContent:"center" }}>
-          {loading ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RotateCcw size={18}/></motion.div> : (isLogin ? "GİRİŞ YAP" : "KAYIT OL")}
+        <motion.button whileTap={!loading ? {scale:0.97} : {}} disabled={loading} type="submit" style={{ padding:"15px", marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", fontWeight:800, fontSize:14, cursor:loading?"not-allowed":"pointer", opacity:loading?0.7:1, display:"flex", justifyContent:"center" }}>
+          {loading ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RotateCcw size={18}/></motion.div> : (
+            authMode === "login" ? "GİRİŞ YAP" :
+            authMode === "register" ? "KAYIT OL" :
+            authMode === "forgot" ? "SIFIRLAMA KODU AL" : "ŞİFREYİ GÜNCELLE"
+          )}
         </motion.button>
 
-        <button type="button" onClick={handleGuestLogin} style={{ padding:"14px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:14, cursor:"pointer" }}>
-          Misafir Olarak Devam Et
-        </button>
+        {(authMode === "login" || authMode === "register") && (
+          <>
+            <button
+              type="button"
+              onClick={() => { setShowGoogleModal(true); setError(""); }}
+              style={{
+                padding:"13px", borderRadius:12, background: dark ? "#fff" : "#1f232b",
+                color: dark ? "#1f232b" : "#fff", border:`1px solid ${c.border}`,
+                fontWeight:800, fontSize:13, cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center", gap:10
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 48 48">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+              Google ile Devam Et
+            </button>
+
+            <button type="button" onClick={handleGuestLogin} style={{ padding:"13px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:13, cursor:"pointer" }}>
+              🎲 Misafir Olarak Devam Et (Cihazda Kalıcı)
+            </button>
+          </>
+        )}
       </form>
 
-      <div style={{ textAlign:"center", marginTop:24 }}>
-        <button type="button" onClick={() => { setIsLogin(!isLogin); setError(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:10 }}>
-          {isLogin ? "Hesabın yok mu? Kayıt Ol" : "Zaten hesabın var mı? Giriş Yap"}
-        </button>
+      <div style={{ textAlign:"center", marginTop:18 }}>
+        {authMode === "login" ? (
+          <button type="button" onClick={() => { setAuthMode("register"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:8 }}>
+            Hesabın yok mu? <span style={{ color:c.accent, fontWeight:800 }}>Kayıt Ol</span>
+          </button>
+        ) : (
+          <button type="button" onClick={() => { setAuthMode("login"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:8 }}>
+            Giriş ekranına dön → <span style={{ color:c.accent, fontWeight:800 }}>Giriş Yap</span>
+          </button>
+        )}
       </div>
+
+      {/* Google Hızlı Giriş Modalı */}
+      <AnimatePresence>
+        {showGoogleModal && (
+          <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(6px)" }}>
+            <motion.form onSubmit={handleGoogleSubmit} initial={{ scale:0.9, y:20 }} animate={{ scale:1, y:0 }} exit={{ scale:0.9, y:20 }} style={{ background:c.panel, borderRadius:24, width:"100%", maxWidth:340, padding:24, display:"flex", flexDirection:"column", gap:14, border:`1px solid ${c.border}`, boxShadow:`0 20px 50px ${c.shadow}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:20 }}>🌐</span>
+                  <h3 style={{ margin:0, fontSize:17, fontWeight:800, color:c.text }}>Google Hesabıyla Giriş</h3>
+                </div>
+                <button type="button" onClick={() => setShowGoogleModal(false)} style={{ background:"none", border:"none", color:c.textSub, cursor:"pointer" }}><X size={18}/></button>
+              </div>
+              <p style={{ fontSize:12, color:c.textSub, margin:0, lineHeight:1.4 }}>
+                Google e-posta adresinizi girerek tek tıkla yeni hesap oluşturabilir veya mevcut Google hesabınıza bağlanabilirsiniz.
+              </p>
+              <div>
+                <label style={{ fontSize:11, fontWeight:700, color:c.textSub, marginBottom:4, display:"block" }}>Google E-posta Adresi</label>
+                <input type="email" required value={googleEmail} onChange={e => setGoogleEmail(e.target.value)} placeholder="adiniz@gmail.com" style={{ width:"100%", boxSizing:"border-box", padding:"12px 14px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none" }} />
+              </div>
+              <div>
+                <label style={{ fontSize:11, fontWeight:700, color:c.textSub, marginBottom:4, display:"block" }}>Görünen Ad (İsteğe Bağlı)</label>
+                <input type="text" value={googleName} onChange={e => setGoogleName(e.target.value)} placeholder="Örn: Utku" style={{ width:"100%", boxSizing:"border-box", padding:"12px 14px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none" }} />
+              </div>
+              <button type="submit" disabled={loading} style={{ padding:"14px", borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", fontWeight:800, fontSize:14, cursor:"pointer", marginTop:4 }}>
+                Google ile Bağlan
+              </button>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2124,7 +2336,7 @@ export default function App() {
     }
   };
 
-  const dismissGameInvite = async (inviteId: string) => {
+  const dismissGameInvite = async (inviteId: number) => {
     setGameInvites(prev => prev.filter(inv => inv.id !== inviteId));
     if (!token || token.startsWith("guest_token_")) return;
     try {
@@ -2203,10 +2415,26 @@ export default function App() {
         setProfileLoaded(true);
       });
     } else {
-      setProfile(prev => ({ ...prev, lastDailyReward: "" }));
+      const savedGuest = localStorage.getItem("yatzy_guest_saved_profile");
+      if (savedGuest) {
+        try {
+          const parsed = JSON.parse(savedGuest);
+          setProfile(prev => ({ ...prev, ...parsed }));
+        } catch (_) {}
+      } else {
+        setProfile(prev => ({ ...prev, lastDailyReward: "" }));
+      }
       setProfileLoaded(true);
     }
   }, [token]);
+
+  // Çevrimdışı misafir profilini de cihazda kalıcı olarak sakla
+  useEffect(() => {
+    if (profileLoaded && token && token.startsWith("guest_token_")) {
+      localStorage.setItem("yatzy_guest_saved_profile", JSON.stringify(profile));
+      localStorage.setItem("yatzy_guest_name", profile.name);
+    }
+  }, [profile, profileLoaded, token]);
 
   const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number) => {
     if (isSearching) return;

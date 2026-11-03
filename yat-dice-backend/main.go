@@ -144,6 +144,7 @@ func randomDie() int {
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Email    string `json:"email"`
 }
 
 func initDB() {
@@ -1092,6 +1093,10 @@ func createTables() {
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS selected_dice VARCHAR(20) DEFAULT 'ivory';`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS login_streak INT DEFAULT 0;`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_daily_reward VARCHAR(20) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_device_id VARCHAR(128) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT FALSE;`,
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -1101,7 +1106,8 @@ func createTables() {
 }
 
 func setupCORS(w *http.ResponseWriter, r *http.Request) bool {
-	(*w).Header().Set("Access-Control-Allow-Origin", "*")
+	allowedOrigin := getEnv("ALLOWED_ORIGIN", "*")
+	(*w).Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	if r.Method == "OPTIONS" {
@@ -1115,6 +1121,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, true) {
+		return
+	}
 
 	var creds Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
@@ -1123,8 +1132,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	creds.Username = strings.TrimSpace(creds.Username)
-	if len(creds.Username) < 2 || len(creds.Username) > 30 || len(creds.Password) < 4 {
-		http.Error(w, "Kullanıcı adı (2-30 karakter) ve şifre (en az 4 karakter) olmalıdır", http.StatusBadRequest)
+	creds.Email = strings.ToLower(strings.TrimSpace(creds.Email))
+	if len(creds.Username) < 2 || len(creds.Username) > 30 || len(creds.Password) < 6 {
+		http.Error(w, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
 		return
 	}
 
@@ -1135,7 +1145,8 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userID int
-	err = db.QueryRow("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id", creds.Username, string(hashedPassword)).Scan(&userID)
+	err = db.QueryRow("INSERT INTO users (username, password_hash, email, is_guest) VALUES ($1, $2, $3, FALSE) RETURNING id",
+		creds.Username, string(hashedPassword), creds.Email).Scan(&userID)
 	if err != nil {
 		http.Error(w, "Bu kullanıcı adı zaten alınmış", http.StatusConflict)
 		return
@@ -1156,6 +1167,9 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, true) {
+		return
+	}
 
 	var creds Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
@@ -1164,34 +1178,36 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	creds.Username = strings.TrimSpace(creds.Username)
+	if locked, secs := checkLoginLocked(creds.Username); locked {
+		http.Error(w, fmt.Sprintf("Çok fazla hatalı giriş denemesi. Lütfen %d saniye sonra tekrar deneyin.", secs), http.StatusTooManyRequests)
+		return
+	}
 
 	var userID int
-	var storedHash string
-	err := db.QueryRow("SELECT id, password_hash FROM users WHERE username = $1", creds.Username).Scan(&userID, &storedHash)
+	var realUsername, storedHash string
+	err := db.QueryRow("SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER($1)", creds.Username).Scan(&userID, &realUsername, &storedHash)
 	if err != nil {
+		_ = bcrypt.CompareHashAndPassword(dummyBcrypt, []byte(creds.Password))
+		recordLoginFailure(creds.Username)
 		http.Error(w, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
 		return
 	}
 
 	if err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(creds.Password)); err != nil {
+		recordLoginFailure(creds.Username)
 		http.Error(w, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
 		return
 	}
+	resetLoginFailures(creds.Username)
 
-	expirationTime := time.Now().Add(24 * time.Hour)
-	claims := &jwt.RegisteredClaims{
-		Subject:   fmt.Sprintf("%d", userID),
-		ExpiresAt: jwt.NewNumericDate(expirationTime),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtKey)
+	tokenString, err := issueJWTForUser(userID, 7)
 	if err != nil {
 		http.Error(w, "Token oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"token": tokenString, "username": creds.Username})
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": tokenString, "username": realUsername})
 }
 
 type ProfileData struct {
@@ -1260,6 +1276,9 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
@@ -1280,6 +1299,9 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 // POST /profile/username : Kullanıcı adını ve kuşanılan zarı güvenli şekilde günceller
 func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
 		return
 	}
 
@@ -1332,6 +1354,9 @@ func handleClaimDaily(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
@@ -1364,13 +1389,17 @@ func handleClaimDaily(w http.ResponseWriter, r *http.Request) {
 	rewardXP := 100 + (cappedStreak * 20)
 	rewardTokens := 50 + (cappedStreak * 10)
 
-	_, err = db.Exec(`
+	res, err := db.Exec(`
 		UPDATE profiles
 		SET xp = xp + $1, tokens = tokens + $2, login_streak = $3, last_daily_reward = $4
-		WHERE user_id = $5
+		WHERE user_id = $5 AND COALESCE(last_daily_reward, '') <> $4
 	`, rewardXP, rewardTokens, newStreak, today, userID)
 	if err != nil {
 		http.Error(w, "Ödül kaydedilemedi", http.StatusInternalServerError)
+		return
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		http.Error(w, "Bugünkü günlük ödül zaten alındı", http.StatusBadRequest)
 		return
 	}
 
@@ -1387,6 +1416,9 @@ func handleClaimDaily(w http.ResponseWriter, r *http.Request) {
 // POST /profile/open-case : Kasa açma işlemini sunucu tarafında atomik olarak yapar
 func handleOpenCase(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
 		return
 	}
 
@@ -1764,6 +1796,10 @@ func main() {
 
 	http.HandleFunc("/register", handleRegister)
 	http.HandleFunc("/login", handleLogin)
+	http.HandleFunc("/auth/guest", handleGuestAuth)
+	http.HandleFunc("/auth/google", handleGoogleAuth)
+	http.HandleFunc("/auth/forgot-password", handleForgotPassword)
+	http.HandleFunc("/auth/reset-password", handleResetPassword)
 	http.HandleFunc("/profile", handleGetProfile)
 	http.HandleFunc("/profile/update", handleUpdateProfile)
 	http.HandleFunc("/profile/claim-daily", handleClaimDaily)
