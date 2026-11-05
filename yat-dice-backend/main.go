@@ -354,6 +354,16 @@ func computeTotalAndBonus(scores map[string]int) (total int, upper int, bonus in
 	return total, upper, bonus
 }
 
+// Kullanıcının seçilen bahis için yeterli jetonu olup olmadığını kontrol eder
+func hasEnoughTokensDB(userID int, bet int) bool {
+	if bet <= 0 || userID <= 0 {
+		return true
+	}
+	var tokens int
+	err := db.QueryRow(`SELECT tokens FROM profiles WHERE user_id = $1`, userID).Scan(&tokens)
+	return err == nil && tokens >= bet
+}
+
 // Bahis miktarını veritabanından atomik olarak düşer (yeterli bakiyesi yoksa false döner)
 func deductBetDB(userID int, bet int) bool {
 	if bet <= 0 || userID <= 0 {
@@ -365,6 +375,23 @@ func deductBetDB(userID int, bet int) bool {
 	}
 	rows, _ := res.RowsAffected()
 	return rows > 0
+}
+
+// İki oyuncudan da bahis miktarını güvenli şekilde düşer; ikinci oyuncuda bakiye yetmezse birinciye anında iade eder
+func deductBothBetsDB(user1ID int, user2ID int, bet int) bool {
+	if bet <= 0 {
+		return true
+	}
+	if !deductBetDB(user1ID, bet) {
+		return false
+	}
+	if !deductBetDB(user2ID, bet) {
+		if user1ID > 0 {
+			_, _ = db.Exec(`UPDATE profiles SET tokens = tokens + $1 WHERE user_id = $2`, bet, user1ID)
+		}
+		return false
+	}
+	return true
 }
 
 // Veritabanında maç sonu ödüllerini ve görev istatistiklerini güvenli şekilde günceller
@@ -560,15 +587,20 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 	}
 
 	if isGameOver {
-		p1Won := p1Total >= p2Total
+		isDraw := p1Total == p2Total
+		p1Won := p1Total > p2Total
 		p2Won := p2Total > p1Total
 
 		p1XP, p1Tokens, p1Cases := 150, 40, 0
-		if p1Won {
-			p1XP, p1Tokens, p1Cases = 300, 100+(r.BetAmount*2), 1
-		}
 		p2XP, p2Tokens, p2Cases := 150, 40, 0
-		if p2Won {
+
+		if isDraw {
+			// Beraberlik durumunda her iki oyuncuya da kendi bahsi (1x) iade edilir + 60 jeton verilir
+			p1XP, p1Tokens, p1Cases = 220, 60+r.BetAmount, 0
+			p2XP, p2Tokens, p2Cases = 220, 60+r.BetAmount, 0
+		} else if p1Won {
+			p1XP, p1Tokens, p1Cases = 300, 100+(r.BetAmount*2), 1
+		} else if p2Won {
 			p2XP, p2Tokens, p2Cases = 300, 100+(r.BetAmount*2), 1
 		}
 
@@ -579,6 +611,7 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 			awardMatchResultDB(r.Player2.UserID, p2Won, p2Total, p2XP, p2Tokens, p2Cases, p2Bonus > 0, r.P2YachtCount)
 		}
 
+		msg["isDraw"] = isDraw
 		msg["betAmount"] = r.BetAmount
 		msg["p1Yachts"] = r.P1YachtCount
 		msg["p2Yachts"] = r.P2YachtCount
@@ -953,6 +986,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				})
 
 			} else if action == "QUICK_MATCH" {
+				if !hasEnoughTokensDB(client.UserID, requestedBet) {
+					requestedBet = 0
+					client.BetAmount = 0
+				}
 				// Aynı oyuncunun kendi kendisiyle eşleşmesini önle
 				if waitingClient == nil || waitingClient == client {
 					waitingClient = client
@@ -963,7 +1000,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					if requestedBet < matchBet {
 						matchBet = requestedBet
 					}
-					if !deductBetDB(opponent.UserID, matchBet) || !deductBetDB(client.UserID, matchBet) {
+					if !deductBothBetsDB(opponent.UserID, client.UserID, matchBet) {
 						matchBet = 0
 					}
 					waitingClient = nil
@@ -994,6 +1031,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				}
 
 			} else if action == "CREATE_ROOM" {
+				if !hasEnoughTokensDB(client.UserID, requestedBet) {
+					requestedBet = 0
+					client.BetAmount = 0
+				}
 				// Önceden açtığı özel oda varsa temizle (Duplicate room leak önleyici)
 				for code, entry := range privateRooms {
 					if entry.Host == client {
@@ -1017,7 +1058,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 				if exists && entry.Host != nil && entry.Host != client {
 					matchBet := entry.BetAmount
-					if !deductBetDB(entry.Host.UserID, matchBet) || !deductBetDB(client.UserID, matchBet) {
+					if !deductBothBetsDB(entry.Host.UserID, client.UserID, matchBet) {
 						matchBet = 0
 					}
 					delete(privateRooms, code)
@@ -2038,11 +2079,20 @@ func main() {
 	http.HandleFunc("/friends/request", handleFriendRequest)
 	http.HandleFunc("/friends/respond", handleFriendRespond)
 	http.HandleFunc("/friends/invite", handleFriendInvite)
+	http.HandleFunc("/leaderboard", handleLeaderboard)
+	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/play", handleConnections)
 
 	port := getEnv("PORT", "8080")
-	fmt.Printf("🚀 Sunucu %s portunda aktif...\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	srv := &http.Server{
+		Addr:              ":" + port,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	fmt.Printf("🚀 Yat Dice Sunucusu %s portunda aktif...\n", port)
+	log.Fatal(srv.ListenAndServe())
 }
 
 // ─── 1. GÜVENLİK: RATE LIMITER & BRUTE-FORCE KORUMASI ─────────────────────────
@@ -2457,8 +2507,10 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	resetMu.Unlock()
 
 	resp := map[string]interface{}{
-		"message":   "Şifre sıfırlama kodu oluşturuldu (10 dakika geçerli).",
-		"resetCode": code,
+		"message": "Şifre sıfırlama kodu oluşturuldu (10 dakika geçerli).",
+	}
+	if getEnv("APP_ENV", "development") != "production" {
+		resp["resetCode"] = code
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -2691,5 +2743,74 @@ func handleClaimQuest(w http.ResponseWriter, r *http.Request) {
 		"rewardTokens": qDef.tokens,
 		"rewardCases":  qDef.cases,
 		"profile":      updated,
+	})
+}
+
+// ─── 7. LİDERLİK TABLOSU (LEADERBOARD) VE SAĞLIK KONTROLÜ (HEALTH CHECK) ──────
+
+type LeaderboardEntry struct {
+	Rank      int    `json:"rank"`
+	Username  string `json:"username"`
+	Avatar    string `json:"avatar"`
+	Country   string `json:"country"`
+	XP        int    `json:"xp"`
+	Wins      int    `json:"wins"`
+	HighScore int    `json:"highScore"`
+}
+
+// GET /leaderboard : En yüksek galibiyet ve XP'ye sahip ilk 20 oyuncuyu döndürür
+func handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT u.username, COALESCE(p.avatar, ''), COALESCE(p.country, 'TR'),
+		       p.xp, p.wins, p.high_score
+		FROM profiles p
+		JOIN users u ON u.id = p.user_id
+		ORDER BY p.wins DESC, p.xp DESC, p.high_score DESC
+		LIMIT 20
+	`)
+	if err != nil {
+		http.Error(w, "Liderlik tablosu alınamadı", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	leaders := []LeaderboardEntry{}
+	rank := 1
+	for rows.Next() {
+		var item LeaderboardEntry
+		if err := rows.Scan(&item.Username, &item.Avatar, &item.Country, &item.XP, &item.Wins, &item.HighScore); err == nil {
+			item.Rank = rank
+			rank++
+			leaders = append(leaders, item)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"leaders": leaders,
+	})
+}
+
+// GET /health : Sunucu ve veritabanı sağlık durumu kontrolü (Docker/Render/Railway için)
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	dbStatus := "ok"
+	if err := db.Ping(); err != nil {
+		dbStatus = "error"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"db":     dbStatus,
+		"time":   time.Now().Format(time.RFC3339),
 	})
 }

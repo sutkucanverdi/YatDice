@@ -10,6 +10,101 @@ import {
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
 
+// ─── Web Audio API Ses Efekt Motoru (Harici MP3 Gerektirmez) ──────────────────
+let sharedAudioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (localStorage.getItem("yatzy_sound") === "off") return null;
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return null;
+  if (!sharedAudioCtx) sharedAudioCtx = new Ctx();
+  if (sharedAudioCtx.state === "suspended") sharedAudioCtx.resume().catch(() => {});
+  return sharedAudioCtx;
+}
+
+const sfx = {
+  roll() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    [0, 0.08, 0.16, 0.25, 0.35].forEach((delay, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(190 + idx * 45 + Math.random() * 50, ctx.currentTime + delay);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.06);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.065);
+    });
+  },
+  lock() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(520, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(740, ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.07, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.065);
+  },
+  score(pts: number) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const notes = pts >= 50 ? [523.25, 659.25, 783.99, 1046.5] : pts > 0 ? [440, 587.33] : [220, 180];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.07);
+      gain.gain.setValueAtTime(0.09, ctx.currentTime + i * 0.07);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.07 + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.07);
+      osc.stop(ctx.currentTime + i * 0.07 + 0.17);
+    });
+  },
+  win() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.09);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.09 + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.09);
+      osc.stop(ctx.currentTime + i * 0.09 + 0.24);
+    });
+  },
+};
+
+// ─── Global Bildirim (Native alert() yerine modern oyun-içi Toast) ────────────
+let toastListener: ((msg: string) => void) | null = null;
+function emitToast(msg: string) {
+  if (toastListener) toastListener(msg);
+}
+
+interface LeaderboardEntry {
+  rank: number;
+  username: string;
+  avatar?: string;
+  country?: string;
+  xp: number;
+  wins: number;
+  highScore: number;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends" | "quests";
 type DieVal  = 1 | 2 | 3 | 4 | 5 | 6;
@@ -897,6 +992,33 @@ function HomeScreen({
   const [showDailyPopup, setShowDailyPopup] = useState(false);
   const [pendingReward, setPendingReward] = useState({ xp: 0, tokens: 0, streak: 1 });
   const [caseAnim, setCaseAnim] = useState<{status: "shaking" | "revealed", reward: number} | null>(null);
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem("yatzy_sound") !== "off");
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [loadingLb, setLoadingLb] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    localStorage.setItem("yatzy_sound", next ? "on" : "off");
+    if (next) sfx.lock();
+  };
+
+  const openLeaderboard = async () => {
+    setShowLeaderboard(true);
+    setLoadingLb(true);
+    try {
+      const res = await fetch(`${API_BASE}/leaderboard`);
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data.leaders || []);
+      }
+    } catch (_) {
+    } finally {
+      setLoadingLb(false);
+    }
+  };
 
   useEffect(() => {
     setTempName(profile.name);
@@ -1005,7 +1127,7 @@ function HomeScreen({
         });
         if (!res.ok) {
           const msg = await res.text();
-          alert(msg || "Profil güncellenemedi");
+          emitToast(msg || "Profil güncellenemedi");
           return;
         }
       }
@@ -1090,6 +1212,9 @@ function HomeScreen({
             <span style={{ fontSize:14 }}>🪙</span>
             <span style={{ fontSize:13, fontWeight:800, color:c.gold }}>{profile.tokens}</span>
           </div>
+          <button onClick={toggleSound} title={soundOn ? "Sesi Kapat" : "Sesi Aç"} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:10, padding:"7px 9px", cursor:"pointer", display:"flex", fontSize:14 }}>
+            {soundOn ? "🔊" : "🔇"}
+          </button>
           <button onClick={toggle} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:10, padding:8, cursor:"pointer", display:"flex" }}>
             {dark ? <Sun size={16} color={c.accent}/> : <Moon size={16} color={c.accent}/>}
           </button>
@@ -1301,7 +1426,142 @@ function HomeScreen({
             </div>
           ))}
         </div>
+
+        {/* LİDERLİK TABLOSU VE OYUN KURALLARI HIZLI ERİŞİM BUTONLARI */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:10 }}>
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={openLeaderboard}
+            style={{
+              background: c.panel, border: `1px solid ${c.border}`, borderRadius: 12,
+              padding: "11px 12px", cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center", gap: 6,
+              color: c.text, fontSize: 12, fontWeight: 700
+            }}
+          >
+            <span>🏆</span> Liderlik Tablosu
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setShowRulesModal(true)}
+            style={{
+              background: c.panel, border: `1px solid ${c.border}`, borderRadius: 12,
+              padding: "11px 12px", cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center", gap: 6,
+              color: c.text, fontSize: 12, fontWeight: 700
+            }}
+          >
+            <span>📖</span> Kurallar & Puanlar
+          </motion.button>
+        </div>
       </div>
+
+      {/* LİDERLİK TABLOSU MODALI */}
+      <AnimatePresence>
+        {showLeaderboard && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowLeaderboard(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 180, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, backdropFilter: "blur(6px)" }}
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 365, maxHeight: "82vh", display: "flex", flexDirection: "column", border: `1px solid ${c.borderMid}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
+            >
+              <div style={{ padding: "16px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
+                <div>
+                  <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>🏆 Küresel Liderlik Tablosu</h3>
+                  <p style={{ color: c.textSub, fontSize: 11, margin: "2px 0 0" }}>En çok galibiyet ve XP toplayan ilk 20 oyuncu</p>
+                </div>
+                <button onClick={() => setShowLeaderboard(false)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
+              </div>
+              <div style={{ padding: 14, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                {loadingLb ? (
+                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>Sıralama yükleniyor...</p>
+                ) : leaderboard.length === 0 ? (
+                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>Henüz sıralama verisi yok.</p>
+                ) : (
+                  leaderboard.map(item => {
+                    const isMe = item.username === profile.name;
+                    const medal = item.rank === 1 ? "🥇" : item.rank === 2 ? "🥈" : item.rank === 3 ? "🥉" : `#${item.rank}`;
+                    return (
+                      <div
+                        key={item.username}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          padding: "9px 12px", borderRadius: 12,
+                          background: isMe ? c.accentBg : c.bg,
+                          border: isMe ? `1.5px solid ${c.accent}` : `1px solid ${c.border}`
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ width: 26, fontSize: item.rank <= 3 ? 17 : 12, fontWeight: 800, color: c.gold, textAlign: "center" }}>{medal}</span>
+                          <Av seed={item.username} size={32} dark={dark} avatar={item.avatar} country={item.country} active={isMe} />
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 800, color: c.text, margin: 0 }}>
+                              {item.username} {isMe && <span style={{ fontSize: 10, color: c.accent }}>(Sen)</span>}
+                            </p>
+                            <p style={{ fontSize: 10, color: c.textSub, margin: "1px 0 0" }}>
+                              Sv.{computeLevel(item.xp)} • Rekor: {item.highScore}
+                            </p>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <p style={{ fontSize: 13, fontWeight: 800, color: c.accent, margin: 0 }}>{item.wins} Galibiyet</p>
+                          <p style={{ fontSize: 10, color: c.gold, fontWeight: 700, margin: 0 }}>{item.xp} XP</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* OYUN KURALLARI & PUAN REHBERİ MODALI */}
+      <AnimatePresence>
+        {showRulesModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowRulesModal(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 180, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, backdropFilter: "blur(6px)" }}
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 365, maxHeight: "82vh", display: "flex", flexDirection: "column", border: `1px solid ${c.borderMid}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
+            >
+              <div style={{ padding: "16px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
+                <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>📖 Nasıl Oynanır & Puan Tablosu</h3>
+                <button onClick={() => setShowRulesModal(false)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
+              </div>
+              <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, fontSize: 12, color: c.textSub, lineHeight: 1.5 }}>
+                <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                  <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>🎲 Temel Akış (13 Tur)</p>
+                  Her turda zarları en fazla <b>3 kez</b> atabilirsin. İstediğin zarların üzerine dokunarak onları <b>kilitleyebilir</b> ve kalan zarları tekrar atabilirsin. Tur sonunda tabloda boş bir kategoriye puanını yazarsın.
+                </div>
+                <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                  <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>📈 Üst Bölüm & +35 Bonus</p>
+                  <b>Birler – Altılar:</b> Sadece ilgili zarların toplamı yazılır.<br />
+                  Üst bölüm toplamın <b>63 veya üzeri</b> olursa anında <b>+35 Bonus Puan</b> kazanırsın!
+                </div>
+                <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                  <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔥 Alt Bölüm Kombinasyonları</p>
+                  • <b>Üçlü / Dörtlü:</b> En az 3 veya 4 aynı zar varsa tüm zarların toplamı.<br />
+                  • <b>Full House (25 Puan):</b> 3 aynı + 2 aynı zar (Örn: 4-4-4-2-2).<br />
+                  • <b>Küçük Sıra (30 Puan):</b> Ardışık 4 zar (1-2-3-4, 2-3-4-5 veya 3-4-5-6).<br />
+                  • <b>Büyük Sıra (40 Puan):</b> Ardışık 5 zar (1-2-3-4-5 veya 2-3-4-5-6).<br />
+                  • <b>YAT (50 Puan):</b> 5 zarın tamamı aynı! (Örn: 6-6-6-6-6).<br />
+                  • <b>Şans:</b> Koşulsuz tüm 5 zarın toplamı.
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ŞIK GÜNLÜK ÖDÜL POP-UP'I */}
       <AnimatePresence>
@@ -1546,9 +1806,10 @@ function ShopScreen({
         });
         if (!res.ok) {
           const errTxt = await res.text();
-          alert(errTxt || "Satın alma başarısız!");
+          emitToast(errTxt || "Satın alma başarısız!");
           return;
         }
+        sfx.win();
         const updated = await res.json();
         setProfile(prev => ({
           ...prev,
@@ -1944,7 +2205,7 @@ function GameScreen({
       }
       else if (data.type === "SCORE_SELECTED") {
         const { key, pts, nextTurn, round: nextRound, p1Scores: s1, p2Scores: s2, p1Total: t1, p2Total: t2, gameOver, rewards } = data;
-        
+        sfx.score(pts);
         const catLabel = CATS.find(cat => cat.key === key)?.label ?? key;
         const id = ++popupIdRef.current;
         setScorePopup({ pts, label: data.autoSelected ? `${catLabel} (Süre Doldu)` : catLabel, id });
@@ -1973,7 +2234,8 @@ function GameScreen({
           const oppFinalBonus = myPlayerIndex === 1 ? (data.p2Bonus || 0) : (data.p1Bonus || 0);
           const myYachtsInMatch = myPlayerIndex === 1 ? (data.p1Yachts || (myFinalScores?.yacht === 50 ? 1 : 0)) : (data.p2Yachts || (myFinalScores?.yacht === 50 ? 1 : 0));
           const myReward = rewards ? rewards[myPlayerId] : { xp: 150, tokens: 40, cases: 0 };
-          const won = myFinalTotal >= oppFinalTotal;
+          const won = myFinalTotal > oppFinalTotal;
+          if (won) sfx.win();
 
           setProfile(prev => {
             const newXp = prev.xp + (myReward?.xp || 0);
@@ -2021,12 +2283,14 @@ function GameScreen({
 
   const doRoll = () => {
     if (!isMyTurn || rollsLeft===0 || rolling || !ws) return; 
+    sfx.roll();
     setRolling(true);
     ws.send(JSON.stringify({ type: "ROLL_DICE", locked: locked }));
   };
 
   const toggleLock = (i:number) => {
     if (rollsLeft===3 || rolling || !isMyTurn || !ws) return;
+    sfx.lock();
     const newLocked = [...locked];
     newLocked[i] = !newLocked[i];
     setLocked(newLocked);
@@ -2566,7 +2830,8 @@ function ResultScreen({
   const oppSeed = summary ? summary.oppSeed : "RK";
   const rewardXp = summary ? summary.rewardXp : 150;
   const rewardTokens = summary ? summary.rewardTokens : 40;
-  const won = myTotal >= oppTotal;
+  const isDraw = myTotal === oppTotal;
+  const won = myTotal > oppTotal;
 
   const rows = [
     ...CATS.slice(0, 6).map(cat => ({
@@ -2586,12 +2851,12 @@ function ResultScreen({
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
       <div style={{ background:c.panel, borderBottom:`1px solid ${c.border}`, padding:"28px 24px 20px", display:"flex", flexDirection:"column", alignItems:"center", gap:12 }}>
         <motion.div initial={{ scale:0.5,opacity:0 }} animate={{ scale:1,opacity:1 }} transition={{ type:"spring",damping:14,delay:0.05 }}
-          style={{ width:64, height:64, borderRadius:"50%", background:won?c.accentBg:"rgba(192,57,43,0.08)", border:`1.5px solid ${won?c.accentRing:"rgba(192,57,43,0.2)"}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          {won?<Crown size={28} color={c.accent}/>:<Trophy size={28} color={c.danger}/>}
+          style={{ width:64, height:64, borderRadius:"50%", background:isDraw?c.goldBg:(won?c.accentBg:"rgba(192,57,43,0.08)"), border:`1.5px solid ${isDraw?c.gold:(won?c.accentRing:"rgba(192,57,43,0.2)")}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          {isDraw ? <span style={{ fontSize: 28 }}>🤝</span> : won ? <Crown size={28} color={c.accent}/> : <Trophy size={28} color={c.danger}/>}
         </motion.div>
         <div style={{ textAlign:"center" }}>
-          <h1 style={{ fontSize:24, fontWeight:800, color:won?c.accent:c.danger }}>{won?"Galibiyet!":"Mağlubiyet"}</h1>
-          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{won?"Harika oynandı!":"Bir dahaki sefere!"}</p>
+          <h1 style={{ fontSize:24, fontWeight:800, color:isDraw?c.gold:(won?c.accent:c.danger) }}>{isDraw ? "Berabere!" : (won ? "Galibiyet!" : "Mağlubiyet")}</h1>
+          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{isDraw ? "Baş başa mücadele! Bahisler iade edildi." : (won ? "Harika oynandı!" : "Bir dahaki sefere!")}</p>
         </div>
         <div style={{ display:"flex", gap:28, alignItems:"flex-end" }}>
           {[{name:profile.name,seed:profile.seed,score:myTotal,you:true},{name:oppName,seed:oppSeed,score:oppTotal,you:false}].map((p, idx)=>(
@@ -2672,22 +2937,22 @@ function ModeScreen({
 }) {
   const c = C(dark);
 
-  const modes: { key: string; label: string; sub: string; icon: string; available: boolean; action?: "QUICK_MATCH" | "BOT_MATCH" }[] = [
+  const modes: { key: string; label: string; sub: string; icon: string; available: boolean; action: "QUICK_MATCH" | "BOT_MATCH"; requiredBet?: BetOption }[] = [
     {
       key: "bot", label: "Bota Karşı (Yapay Zeka)", sub: "Beklemeden anında 🤖 YatBot ile oyna",
       icon: "🤖", available: true, action: "BOT_MATCH",
     },
     {
-      key: "classic", label: "Klasik Çevrimiçi", sub: "Gerçek oyuncularla 13 tur Hızlı Eşleşme",
+      key: "classic", label: "Klasik Çevrimiçi Arena", sub: "Gerçek oyuncularla 13 tur Hızlı Eşleşme",
       icon: "🎲", available: true, action: "QUICK_MATCH",
     },
     {
-      key: "timeattack", label: "Zaman Saldırısı", sub: "Yakında",
-      icon: "⏱️", available: false,
+      key: "highroller", label: "Yüksek Bahis Arenası", sub: "250 🪙 Giriş • Kazanan +500 🪙 Alır",
+      icon: "🔥", available: true, action: "QUICK_MATCH", requiredBet: 250,
     },
     {
-      key: "blitz", label: "Blitz", sub: "Yakında",
-      icon: "⚡", available: false,
+      key: "viproyal", label: "VIP Kraliyet Masası", sub: "500 🪙 Giriş • Kazanan +1.000 🪙 Alır",
+      icon: "👑", available: true, action: "QUICK_MATCH", requiredBet: 500,
     },
   ];
 
@@ -2751,7 +3016,17 @@ function ModeScreen({
             animate={{ opacity:1, y:0 }}
             transition={{ delay: i*0.06 }}
             whileTap={m.available ? { scale:0.97 } : {}}
-            onClick={() => m.available && m.action && onSelectMode(m.action)}
+            onClick={() => {
+              if (!m.available) return;
+              if (m.requiredBet) {
+                if (tokens < m.requiredBet) {
+                  emitToast(`Bu masa için en az ${m.requiredBet} 🪙 jeton gerekli!`);
+                  return;
+                }
+                setBetAmount(m.requiredBet);
+              }
+              onSelectMode(m.action);
+            }}
             style={{
               background: m.available ? c.panel : c.panelAlt,
               border: m.available ? `1px solid ${c.borderMid}` : `1px solid ${c.border}`,
@@ -2839,9 +3114,10 @@ function QuestsScreen({
         });
         if (!res.ok) {
           const txt = await res.text();
-          alert(txt || "Görev ödülü alınamadı");
+          emitToast(txt || "Görev ödülü alınamadı");
           return;
         }
+        sfx.win();
         const data = await res.json();
         const p = data.profile;
         setProfile(prev => ({
@@ -3353,9 +3629,20 @@ export default function App() {
   const [outgoingRequests, setOutgoingRequests] = useState<FriendItem[]>([]);
   const [gameInvites, setGameInvites] = useState<GameInvite[]>([]);
   const [onlineToast, setOnlineToast] = useState<FriendItem | null>(null);
+  const [appToast, setAppToast] = useState<string | null>(null);
   const prevOnlineIdsRef = React.useRef<Set<number>>(new Set());
   const friendsInitRef = React.useRef<boolean>(false);
   const c = C(dark);
+
+  useEffect(() => {
+    toastListener = (msg: string) => {
+      setAppToast(msg);
+      setTimeout(() => setAppToast(prev => (prev === msg ? null : prev)), 3600);
+    };
+    return () => {
+      toastListener = null;
+    };
+  }, []);
 
   const fetchFriends = async () => {
     if (!token || token.startsWith("guest_token_")) return;
@@ -3563,7 +3850,7 @@ export default function App() {
         setScreen("game");
       }
       else if (data.type === "ERROR") {
-        alert(data.message);
+        emitToast(data.message || "Bağlantı hatası");
         setIsSearching(false);
         setCreatedRoomCode(null);
         socket.close();
@@ -3598,6 +3885,30 @@ export default function App() {
         overflow:"hidden", position:"relative", display:"flex", flexDirection:"column",
         boxShadow:"0 24px 64px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.12)",
       }}>
+
+        {/* Uygulama İçi Modern Bildirim (Toast) */}
+        <AnimatePresence>
+          {appToast && (
+            <motion.div
+              initial={{ opacity: 0, y: -30 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -30 }}
+              style={{
+                position: "absolute", top: 14, left: 16, right: 16,
+                background: c.panel, color: c.text,
+                border: `1.5px solid ${c.danger}`, borderRadius: 14,
+                padding: "11px 14px", fontSize: 12, fontWeight: 700,
+                zIndex: 250, boxShadow: "0 12px 30px rgba(0,0,0,0.45)",
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10
+              }}
+            >
+              <span>⚠️ {appToast}</span>
+              <button onClick={() => setAppToast(null)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer", display: "flex" }}>
+                <X size={15} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Arkadaş Çevrimiçi Oldu Bildirimi */}
         <AnimatePresence>
