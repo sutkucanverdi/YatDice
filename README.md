@@ -1,4 +1,4 @@
-# 🎲 Yat Dice — Gerçek Zamanlı Çevrimiçi Zar Oyunu
+# 🎲 Yat Dice — Yahtzee | Gerçek Zamanlı Çevrimiçi Zar Oyunu
 
 **Yat Dice**, **Go (WebSocket)**, **React (TypeScript + Motion)** ve **PostgreSQL** kullanılarak geliştirilmiş, sunucu otoriteli (server-authoritative), gerçek zamanlı çevrimiçi ve yapay zeka destekli bir Yatzy (5 zar) strateji oyunudur.
 
