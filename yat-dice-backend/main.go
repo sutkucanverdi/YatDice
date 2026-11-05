@@ -1053,6 +1053,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						},
 					})
 					opponent.Room = nil
+					setUserGameState(opponent.UserID, false)
 				}
 			}
 			room.Mu.Unlock()
@@ -1092,7 +1093,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 			if action == "BOT_MATCH" {
 				if !deductBetDB(client.UserID, requestedBet) {
-					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Seçilen bahis için yeterli jetonunuz yok!"})
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Seçilen masa için yeterli jetonunuz yok!"})
 					mu.Unlock()
 					continue
 				}
@@ -2271,6 +2272,10 @@ func main() {
 	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/play", handleConnections)
 
+	if !isDevelopment() && strings.TrimSpace(os.Getenv("ALLOWED_ORIGIN")) == "" {
+		log.Println("⚠️ ALLOWED_ORIGIN tanımlı değil: web sitenizden gelen WebSocket bağlantıları reddedilecek.")
+	}
+
 	port := getEnv("PORT", "8080")
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -3044,13 +3049,14 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
-	dbStatus := "ok"
+	status, dbStatus, code := "ok", "ok", http.StatusOK
 	if err := db.Ping(); err != nil {
-		dbStatus = "error"
+		status, dbStatus, code = "error", "error", http.StatusServiceUnavailable
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
+		"status": status,
 		"db":     dbStatus,
 		"time":   time.Now().Format(time.RFC3339),
 	})

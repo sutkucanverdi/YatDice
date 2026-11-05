@@ -10,6 +10,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
 const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+const APP_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
 // ─── Web Audio API Ses Efekt Motoru (Harici MP3 Gerektirmez) ──────────────────
 let sharedAudioCtx: AudioContext | null = null;
@@ -692,7 +693,7 @@ function Av({
       display:"flex", alignItems:"center", justifyContent:"center",
       fontSize: isEmoji ? size*0.48 : size*0.33, fontWeight:700, color:"#fff", flexShrink:0,
       boxShadow: active?`0 0 0 3px ${c.accentRing}`:undefined,
-      fontFamily:"Inter,sans-serif", position:"relative", overflow:"visible"
+      fontFamily:APP_FONT, position:"relative", overflow:"visible"
     }}>
       {isImg ? (
         <img src={avatar} alt="avatar" style={{ width:"100%", height:"100%", borderRadius:"50%", objectFit:"cover" }} />
@@ -755,7 +756,8 @@ function PremiumTray({ children, dark }: { children:React.ReactNode; dark:boolea
 function getOrCreateDeviceId(): string {
   let devId = localStorage.getItem("yatzy_device_id");
   if (!devId) {
-    devId = "dev_" + Math.random().toString(36).substring(2, 12) + "_" + Date.now().toString(36);
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    devId = "dev_" + Array.from(bytes, x => x.toString(16).padStart(2, "0")).join("");
     localStorage.setItem("yatzy_device_id", devId);
   }
   return devId;
@@ -858,7 +860,8 @@ function GoogleSignInButton({ dark, onCredential, onError }: {
         });
         api.renderButton(containerRef.current, {
           type: "standard", theme: dark ? "filled_black" : "outline", size: "large",
-          text: "continue_with", shape: "rectangular", locale: "tr", width: 280
+          text: "continue_with", shape: "rectangular", locale: "tr",
+          width: Math.min(400, containerRef.current.offsetWidth)
         });
       })
       .catch((err: Error) => {
@@ -997,7 +1000,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   };
 
   return (
-    <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:"Inter,sans-serif" }}>
+    <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:APP_FONT }}>
       <div style={{ display:"flex", justifyContent:"center", gap:8, marginBottom: 24 }}>
         {([3,1,5,2,4] as DieVal[]).map((v,i)=>(
           <motion.div key={i} initial={{ y: -50, opacity: 0, rotate: -180 }} animate={{ y: 0, opacity: 1, rotate: 0 }} transition={{ delay: i * 0.1, type: "spring", stiffness: 200, damping: 15 }}>
@@ -1082,7 +1085,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
             )}
 
             <button type="button" onClick={handleGuestLogin} style={{ padding:"13px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:13, cursor:"pointer" }}>
-              🎲 Misafir Olarak Devam Et (Cihazda Kalıcı)
+              🎲 Misafir Olarak Devam Et
             </button>
           </>
         )}
@@ -1101,7 +1104,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         <button
           type="button"
           onClick={() => setShowLegal(true)}
-          style={{ background: "none", border: "none", color: c.textFaint, fontSize: 10.5, cursor: "pointer", textDecoration: "underline", padding: 2 }}
+          style={{ background: "none", border: "none", color: c.textSub, fontSize: 10.5, cursor: "pointer", textDecoration: "underline", padding: 2 }}
         >
           📜 Gizlilik Politikası, Kullanım Koşulları (EULA) ve Yasal Beyan
         </button>
@@ -1371,7 +1374,7 @@ function HomeScreen({
   const xpInLevel = profile.xp % 1000;
 
   return (
-    <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column", paddingBottom: 32 }}>
+    <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column", paddingBottom: 32 }}>
       {/* Topbar */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"28px 20px 14px" }}>
         <div onClick={()=>setIsEditing(true)} style={{ display:"flex", alignItems:"center", gap:12, cursor:"pointer", padding: "4px 8px 4px 0", borderRadius: 12, transition:"background 0.2s" }}>
@@ -1438,8 +1441,8 @@ function HomeScreen({
              {profile.cases > 0 ? `${profile.cases} Kasa Açılmayı Bekliyor` : "Kasa Yok"}
            </span>
         </motion.button>
-        <span style={{ fontSize:9.5, color:c.textFaint, textAlign:"center" }}>
-          📦 Kasa Olasılığı: %100 Sanal Jeton (50–99 🪙 %33.3 • 100–149 🪙 %33.3 • 150–199 🪙 %33.4)
+        <span style={{ fontSize:9.5, color:c.textSub, textAlign:"center" }}>
+          Kasa olasılığı (sanal jeton): 50–99 %33,3 · 100–149 %33,3 · 150–199 %33,4
         </span>
       </div>
 
@@ -1447,11 +1450,11 @@ function HomeScreen({
       <div style={{ padding:"0 20px 14px" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
-              🏆 Masa Giriş Jetonu (Sanal)
+            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>
+              Masa Giriş Jetonu
             </span>
-            <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
-              {betAmount === 0 ? "Ücretsiz Dostluk Maçı" : `Ödül Havuzu: +${betAmount * 2} 🪙`}
+            <span style={{ fontSize:11, fontWeight:800, color:c.gold, whiteSpace:"nowrap" }}>
+              {betAmount === 0 ? "Dostluk Maçı" : `Ödül: ${betAmount * 2} 🪙`}
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
@@ -1465,7 +1468,7 @@ function HomeScreen({
                   disabled={!canAfford || isSearching || createdRoomCode !== null}
                   onClick={() => setBetAmount(b)}
                   style={{
-                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800,
+                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800, whiteSpace:"nowrap",
                     cursor: (!canAfford || isSearching || createdRoomCode !== null) ? "not-allowed" : "pointer",
                     background: active ? c.gold : c.panelAlt,
                     color: active ? "#1a1405" : (canAfford ? c.text : c.textFaint),
@@ -1893,7 +1896,7 @@ function HomeScreen({
 
                 <div>
                   <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Kullanıcı Adı</p>
-                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:"Inter,sans-serif", fontWeight:600 }} placeholder="Adınızı girin" />
+                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:APP_FONT, fontWeight:600 }} placeholder="Adınızı girin" />
                 </div>
 
                 <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:14 }}>Değişiklikleri Kaydet</button>
@@ -2044,7 +2047,7 @@ function ShopScreen({
   };
 
   return (
-    <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
+    <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column" }}>
       <div style={{ display:"flex", alignItems:"center", gap:12, padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <div>
           <h2 style={{ fontSize:20, fontWeight:800, color:c.text }}>Koleksiyon</h2>
@@ -2062,7 +2065,7 @@ function ShopScreen({
           <button onClick={roll} disabled={rolling} style={{
             width:"100%", padding:"11px", background:dark?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.45)",
             border:`1px solid ${c.borderMid}`, borderRadius:10,
-            color:dark?"#fff":c.text, fontSize:13, fontWeight:600, fontFamily:"Inter,sans-serif", cursor:rolling?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, position:"relative", zIndex:1, backdropFilter:"blur(5px)",
+            color:dark?"#fff":c.text, fontSize:13, fontWeight:600, fontFamily:APP_FONT, cursor:rolling?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, position:"relative", zIndex:1, backdropFilter:"blur(5px)",
           }}>
             <RotateCcw size={13}/> Seçili Zarı Dene ({MAT[sel].name})
           </button>
@@ -2089,21 +2092,18 @@ function ShopScreen({
               <motion.div key={d} whileTap={{scale:0.97}} onClick={()=>handleDiceClick(d)} style={{
                 background: active?c.accentBg:c.panel,
                 border: active?`1.5px solid ${c.accent}`:`1px solid ${c.border}`,
-                borderRadius:14, padding:"14px", cursor:"pointer",
-                display:"flex", alignItems:"center", gap:12, position:"relative",
+                borderRadius:14, padding:"12px", cursor:"pointer",
+                display:"flex", alignItems:"center", gap:10, position:"relative",
               }}>
-                <Die3D state={initDie(5)} size={44} locked={false} mat={d}/>
-                <div style={{ flex:1 }}>
+                <Die3D state={initDie(5)} size={40} locked={false} mat={d}/>
+                <div style={{ flex:1, minWidth:0, paddingRight:12 }}>
                   <p style={{ fontSize:13, fontWeight:700, color:c.text, margin:0 }}>{MAT[d].name}</p>
                   {isUnlocked ? (
                     <p style={{ fontSize:10, color:active?c.accent:c.textSub, marginTop:3, fontWeight:600 }}>
                       {active ? "✓ Kullanımda" : "Sahipsin (İncele)"}
                     </p>
                   ) : (
-                    <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
-                      <span style={{ fontSize:11, color:canAfford?c.gold:c.danger, fontWeight:800 }}>🪙 {price}</span>
-                      <span style={{ fontSize:9, background:c.panelAlt, color:c.textSub, padding:"2px 6px", borderRadius:6, fontWeight:700 }}>İncele / Al</span>
-                    </div>
+                    <p style={{ fontSize:11, color:canAfford?c.gold:c.danger, fontWeight:800, marginTop:4, whiteSpace:"nowrap" }}>🪙 {price}</p>
                   )}
                 </div>
                 {active&&<div style={{ position:"absolute", top:8, right:8, width:18, height:18, borderRadius:"50%", background:c.accent, display:"flex", alignItems:"center", justifyContent:"center" }}><Check size={10} color="#fff" strokeWidth={3}/></div>}
@@ -2609,21 +2609,21 @@ function GameScreen({
   const canScore = rollsLeft < 3 && !rolling;
 
   return (
-    <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column", position:"relative" }}>
-      <div style={{ padding: "12px 20px 0", background: c.panel, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-         <button onClick={handleLeave} style={{ background: "transparent", border: "none", color: c.danger, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
+    <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column", position:"relative" }}>
+      <div style={{ padding: "12px 12px 0", background: c.panel, display:"flex", justifyContent:"space-between", alignItems:"center", gap: 6 }}>
+         <button onClick={handleLeave} style={{ background: "transparent", border: "none", color: c.danger, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 2, padding: 0, whiteSpace: "nowrap", flexShrink: 0 }}>
            <ChevronLeft size={16} /> TERK ET
          </button>
 
          {/* Hızlı Emoji ve Canlı Sohbet Çubuğu */}
-         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+         <div style={{ display:"flex", alignItems:"center", gap:4 }}>
            {["🎲", "👏", "🔥", "😱", "😎"].map(em => (
              <button
                key={em}
                onClick={() => sendEmoji(em)}
                style={{
                  background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:8,
-                 padding:"3px 7px", cursor: emojiCooldown ? "not-allowed" : "pointer",
+                 padding:"3px 5px", cursor: emojiCooldown ? "not-allowed" : "pointer",
                  fontSize:13, opacity: emojiCooldown ? 0.45 : 1, transition: "0.15s"
                }}
              >
@@ -2635,7 +2635,7 @@ function GameScreen({
              title={gameSoundOn ? "Sesi Kapat" : "Sesi Aç"}
              style={{
                background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8,
-               padding: "3px 7px", cursor: "pointer", fontSize: 12
+               padding: "3px 5px", cursor: "pointer", fontSize: 12
              }}
            >
              {gameSoundOn ? "🔊" : "🔇"}
@@ -2644,7 +2644,7 @@ function GameScreen({
              onClick={() => setChatOpen(true)}
              style={{
                position: "relative", background: c.accentBg, border: `1px solid ${c.accentRing}`,
-               color: c.accent, borderRadius: 8, padding: "4px 9px", cursor: "pointer",
+               color: c.accent, borderRadius: 8, padding: "4px 7px", cursor: "pointer", whiteSpace: "nowrap",
                fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4
              }}
            >
@@ -2815,7 +2815,7 @@ function GameScreen({
                   >
                     <div style={{ background:"rgba(0,0,0,0.78)", borderRadius:16, padding:"10px 22px", display:"flex", flexDirection:"column", alignItems:"center", gap:2, backdropFilter:"blur(6px)", border:"1px solid rgba(255,255,255,0.12)" }}>
                       <span style={{ fontSize:10, color:"rgba(255,255,255,0.6)", fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", textAlign:"center" }}>{scorePopup.label}</span>
-                      <span style={{ fontSize: scorePopup.pts===0 ? 22 : 32, fontWeight:900, fontFamily:"Inter,sans-serif", lineHeight:1, color: scorePopup.pts===0 ? "#e74c3c" : scorePopup.pts>=40 ? "#f5c842" : "#4aada6" }}>
+                      <span style={{ fontSize: scorePopup.pts===0 ? 22 : 32, fontWeight:900, fontFamily:APP_FONT, lineHeight:1, color: scorePopup.pts===0 ? "#e74c3c" : scorePopup.pts>=40 ? "#f5c842" : "#4aada6" }}>
                         {scorePopup.pts===0 ? "Puan yok" : `+${scorePopup.pts}`}
                       </span>
                       {scorePopup.pts>0 && <span style={{ fontSize:11, color:"rgba(255,255,255,0.5)" }}>puan</span>}
@@ -2839,11 +2839,11 @@ function GameScreen({
             disabled={rollsLeft===0 || rolling || !isMyTurn}
             style={{
               width:"100%", padding:"16px",
-              background: rollsLeft>0 && isMyTurn ? "#3498db" : (dark?"#34495e":"#bdc3c7"),
-              color: rollsLeft>0 && isMyTurn ? "#fff" : (dark?"#7f8c8d":"#7f8c8d"),
-              fontSize:16, fontWeight:800, fontFamily:"Inter,sans-serif",
+              background: rollsLeft>0 && isMyTurn ? c.accent : c.panelAlt,
+              color: rollsLeft>0 && isMyTurn ? (dark?c.bg:"#fff") : c.textSub,
+              fontSize:16, fontWeight:800, fontFamily:APP_FONT,
               borderRadius:12, border:"none", cursor:rollsLeft===0||rolling||!isMyTurn?"not-allowed":"pointer",
-              boxShadow: rollsLeft>0 && isMyTurn ? `0 6px 0 #2980b9` : "none",
+              boxShadow: rollsLeft>0 && isMyTurn ? `0 6px 0 ${dark?"#2f7a75":"#2c6e69"}` : "none",
               transform: rollsLeft===0||rolling||!isMyTurn ? "translateY(4px)" : "none",
               transition: "all 0.1s"
             }}
@@ -3163,7 +3163,7 @@ function ResultScreen({
   ];
 
   return (
-    <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
+    <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column" }}>
       <div style={{ background:c.panel, borderBottom:`1px solid ${c.border}`, padding:"28px 24px 20px", display:"flex", flexDirection:"column", alignItems:"center", gap:12 }}>
         <motion.div initial={{ scale:0.5,opacity:0 }} animate={{ scale:1,opacity:1 }} transition={{ type:"spring",damping:14,delay:0.05 }}
           style={{ width:64, height:64, borderRadius:"50%", background:isDraw?c.goldBg:(won?c.accentBg:"rgba(192,57,43,0.08)"), border:`1.5px solid ${isDraw?c.gold:(won?c.accentRing:"rgba(192,57,43,0.2)")}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -3230,12 +3230,12 @@ function ResultScreen({
       <div style={{ padding:"14px 20px 32px", display:"flex", flexDirection:"column", gap:10, marginTop:"auto" }}>
         <motion.button whileTap={{ scale:0.97 }} onClick={onPlayAgain} style={{
           width:"100%", padding:"15px", background:c.accent, color:dark?c.bg:"#fff",
-          fontSize:15, fontWeight:700, fontFamily:"Inter,sans-serif", borderRadius:14, border:"none",
+          fontSize:15, fontWeight:700, fontFamily:APP_FONT, borderRadius:14, border:"none",
           cursor:"pointer", letterSpacing:"0.04em", boxShadow:dark?`0 4px 16px rgba(74,173,166,0.32)`:`0 4px 16px rgba(61,139,133,0.26)`,
         }}>Yeni Maç Ara</motion.button>
         <motion.button whileTap={{ scale:0.97 }} onClick={()=>go("home")} style={{
           width:"100%", padding:"15px", background:"transparent", color:c.text,
-          fontSize:15, fontWeight:500, fontFamily:"Inter,sans-serif", borderRadius:14, border:`1.5px solid ${c.borderMid}`, cursor:"pointer",
+          fontSize:15, fontWeight:500, fontFamily:APP_FONT, borderRadius:14, border:`1.5px solid ${c.borderMid}`, cursor:"pointer",
         }}>Ana Sayfaya Dön</motion.button>
       </div>
     </div>
@@ -3247,41 +3247,41 @@ function ResultScreen({
 function ModeScreen({
   dark, onSelectMode, betAmount, setBetAmount, tokens
 }: {
-  dark:boolean; onSelectMode:(mode: "QUICK_MATCH" | "BOT_MATCH")=>void;
+  dark:boolean; onSelectMode:(mode: "QUICK_MATCH" | "BOT_MATCH", bet?: BetOption)=>void;
   betAmount:BetOption; setBetAmount:(b:BetOption)=>void; tokens:number;
 }) {
   const c = C(dark);
 
   const modes: { key: string; label: string; sub: string; icon: string; available: boolean; action: "QUICK_MATCH" | "BOT_MATCH"; requiredBet?: BetOption }[] = [
     {
-      key: "bot", label: "Bota Karşı (Yapay Zeka)", sub: "Beklemeden anında 🤖 YatBot ile oyna",
+      key: "bot", label: "Bota Karşı (Yapay Zeka)", sub: "Beklemeden anında YatBot ile oyna",
       icon: "🤖", available: true, action: "BOT_MATCH",
     },
     {
-      key: "classic", label: "Klasik Çevrimiçi Arena", sub: "Gerçek oyuncularla 13 tur Hızlı Eşleşme",
+      key: "classic", label: "Klasik Çevrimiçi Arena", sub: "Gerçek oyuncularla hızlı eşleşme",
       icon: "🎲", available: true, action: "QUICK_MATCH",
     },
     {
-      key: "highroller", label: "Ustalar Arenası", sub: "250 🪙 Giriş • Kazanan +500 🪙 Sanal Jeton Alır",
+      key: "highroller", label: "Ustalar Arenası", sub: "Giriş 250 🪙 · Ödül 500 🪙",
       icon: "🔥", available: true, action: "QUICK_MATCH", requiredBet: 250,
     },
     {
-      key: "viproyal", label: "VIP Kraliyet Masası", sub: "500 🪙 Giriş • Kazanan +1.000 🪙 Sanal Jeton Alır",
+      key: "viproyal", label: "VIP Kraliyet Masası", sub: "Giriş 500 🪙 · Ödül 1.000 🪙",
       icon: "👑", available: true, action: "QUICK_MATCH", requiredBet: 500,
     },
   ];
 
   return (
-    <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
+    <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column" }}>
       <div style={{ padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <h2 style={{ fontSize:22, fontWeight:800, color:c.text, marginBottom:4 }}>Mod Seç</h2>
         <p style={{ fontSize:12, color:c.textSub }}>Masa giriş jetonunu seç ve maça başla</p>
       </div>
 
       {/* Üstte dekoratif dönen 3D zarlar - uygun boşluklarla hizalandı */}
-      <div style={{ padding:"18px 20px 10px", display:"flex", justifyContent:"center", gap:12 }}>
+      <div style={{ padding:"18px 20px 10px", display:"flex", justifyContent:"center", gap:18 }}>
         {([2,4,6,1,3] as DieVal[]).map((v,i)=>(
-          <Die3D key={i} index={i} state={initDie(v,i)} size={40} locked={false} mat="ivory" isIdle={true}/>
+          <Die3D key={i} index={i} state={initDie(v,i)} size={34} locked={false} mat="ivory" isIdle={true}/>
         ))}
       </div>
 
@@ -3289,11 +3289,11 @@ function ModeScreen({
       <div style={{ padding:"6px 20px 4px" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
-              🏆 Masa Giriş Jetonu (Sanal)
+            <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>
+              Masa Giriş Jetonu
             </span>
-            <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
-              {betAmount === 0 ? "Ücretsiz" : `Ödül Havuzu: ${betAmount * 2} 🪙`}
+            <span style={{ fontSize:11, fontWeight:800, color:c.gold, whiteSpace:"nowrap" }}>
+              {betAmount === 0 ? "Dostluk Maçı" : `Ödül: ${betAmount * 2} 🪙`}
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
@@ -3307,7 +3307,7 @@ function ModeScreen({
                   disabled={!canAfford}
                   onClick={() => setBetAmount(b)}
                   style={{
-                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800,
+                    padding:"7px 4px", borderRadius:10, fontSize:11, fontWeight:800, whiteSpace:"nowrap",
                     cursor: !canAfford ? "not-allowed" : "pointer",
                     background: active ? c.gold : c.panelAlt,
                     color: active ? "#1a1405" : (canAfford ? c.text : c.textFaint),
@@ -3340,7 +3340,7 @@ function ModeScreen({
                 }
                 setBetAmount(m.requiredBet);
               }
-              onSelectMode(m.action);
+              onSelectMode(m.action, m.requiredBet);
             }}
             style={{
               background: m.available ? c.panel : c.panelAlt,
@@ -3361,7 +3361,7 @@ function ModeScreen({
             }}>
               {m.icon}
             </div>
-            <div style={{ flex:1 }}>
+            <div style={{ flex:1, minWidth:0 }}>
               <p style={{ fontSize:15, fontWeight:700, color: m.available ? c.text : c.textSub }}>{m.label}</p>
               <p style={{ fontSize:11, color: m.available ? c.accent : c.textFaint, marginTop:2, fontWeight: m.available?500:400 }}>{m.sub}</p>
             </div>
@@ -3552,7 +3552,7 @@ function QuestsScreen({
               ✨ +{q.xp} XP
             </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: c.gold, background: c.goldBg, padding: "4px 8px", borderRadius: 8 }}>
-              🪙 +{q.tokens} Altın
+              🪙 +{q.tokens} Jeton
             </span>
             {q.cases > 0 && (
               <span style={{ fontSize: 11, fontWeight: 800, color: "#f39c12", background: "rgba(243,156,18,0.14)", padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(243,156,18,0.35)" }}>
@@ -3581,7 +3581,7 @@ function QuestsScreen({
               {claimingId === q.id ? "Alınıyor..." : (q.cases > 0 ? "🎁 Ödül & Kasa Al" : "🎁 Ödülü Al")}
             </motion.button>
           ) : (
-            <span style={{ fontSize: 11, fontWeight: 700, color: c.textSub }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: c.textSub, whiteSpace: "nowrap" }}>
               {prog.current} / {prog.target}
             </span>
           )}
@@ -3602,11 +3602,11 @@ function QuestsScreen({
   };
 
   return (
-    <div style={{ minHeight: "100%", background: c.bg, fontFamily: "Inter,sans-serif", display: "flex", flexDirection: "column", paddingBottom: 32 }}>
+    <div style={{ minHeight: "100%", background: c.bg, fontFamily: APP_FONT, display: "flex", flexDirection: "column", paddingBottom: 32 }}>
       <div style={{ padding: "28px 20px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>Görev Modu</h2>
-          <p style={{ fontSize: 12, color: c.textSub }}>Görevleri tamamla; XP, Altın ve Kasa kazan!</p>
+          <p style={{ fontSize: 12, color: c.textSub }}>Görevleri tamamla; XP, Jeton ve Kasa kazan!</p>
         </div>
         <div style={{ background: c.accentBg, border: `1px solid ${c.accentRing}`, borderRadius: 14, padding: "8px 12px", textAlign: "center" }}>
           <p style={{ fontSize: 14, fontWeight: 900, color: c.accent, margin: 0 }}>{claimedSet.size} / {QUEST_LIST.length}</p>
@@ -3617,7 +3617,7 @@ function QuestsScreen({
       <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
         <div>
           <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-            🎯 Normal Görevler (XP & Altın Ödüllü)
+            🎯 Normal Görevler
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {QUEST_LIST.filter(q => q.difficulty === "normal").map(renderQuestCard)}
@@ -3626,7 +3626,7 @@ function QuestsScreen({
 
         <div>
           <p style={{ fontSize: 10, fontWeight: 800, color: c.gold, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-            🔥 Zor & Efsanevi Görevler (XP + Altın + Sürpriz Kasa 📦)
+            🔥 Zor & Efsanevi Görevler
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {QUEST_LIST.filter(q => q.difficulty === "hard").map(renderQuestCard)}
@@ -3754,7 +3754,7 @@ function FriendsScreen({
   };
 
   return (
-    <div style={{ minHeight: "100%", background: c.bg, fontFamily: "Inter,sans-serif", display: "flex", flexDirection: "column", paddingBottom: 32 }}>
+    <div style={{ minHeight: "100%", background: c.bg, fontFamily: APP_FONT, display: "flex", flexDirection: "column", paddingBottom: 32 }}>
       <div style={{ padding: "28px 20px 18px", borderBottom: `1px solid ${c.border}` }}>
         <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>Arkadaşlar</h2>
         <p style={{ fontSize: 12, color: c.textSub }}>Arkadaş ekle ve tek tıkla maça davet et</p>
@@ -3910,8 +3910,10 @@ function FriendsScreen({
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem("yatzy_jwt_token"));
   const cancelledSocketRef = useRef<WebSocket | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const savedUsername = localStorage.getItem("yatzy_username") || "Oyuncu 1";
   const [screen, setScreen] = useState<Screen>(localStorage.getItem("yatzy_jwt_token") ? "home" : "auth");
+  const hasBottomNav = screen !== "auth" && screen !== "result" && screen !== "game";
 
   const [dark, setDark] = useState(true);
   const [dieMat, setDieMat] = useState<DieMat>("ivory");
@@ -4136,9 +4138,10 @@ export default function App() {
     emitToast("Sunucuya bağlanılamadı. Lütfen tekrar dene.");
   };
 
-  const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number) => {
+  const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number, betOverride?: BetOption) => {
     if (isSearching || !token) return;
-    const effectiveBet: BetOption = profile.tokens >= betAmount ? betAmount : 0;
+    const requestedBet = betOverride ?? betAmount;
+    const effectiveBet: BetOption = profile.tokens >= requestedBet ? requestedBet : 0;
     if (ws) {
       ws.close();
     }
@@ -4213,7 +4216,8 @@ export default function App() {
   return (
     <div style={{ minHeight:"100dvh", background:dark?"#111318":"#dedad3", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div style={{
-        width:"min(420px,100vw)", height:"min(860px,100dvh)",
+        width:"min(420px,100vw)", height:"min(860px,100dvh)", boxSizing:"border-box",
+        paddingTop:"env(safe-area-inset-top)",
         background:c.bg, borderRadius:"min(44px,0px)",
         overflow:"hidden", position:"relative", display:"flex", flexDirection:"column",
         boxShadow:"0 24px 64px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.12)",
@@ -4352,8 +4356,8 @@ export default function App() {
         </AnimatePresence>
         
         {/* İçerik Ekranları */}
-        <div style={{ flex:1, overflowY:"auto", position:"relative" }}>
-          <AnimatePresence mode="wait">
+        <div ref={contentRef} style={{ flex:1, overflowY:"auto", position:"relative", paddingBottom: hasBottomNav ? 0 : "env(safe-area-inset-bottom)" }}>
+          <AnimatePresence mode="wait" onExitComplete={() => contentRef.current?.scrollTo(0, 0)}>
             <motion.div key={screen} initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-8 }} transition={{ duration:0.16 }} style={{ height:"100%" }}>
               {screen==="auth" && <AuthScreen onLogin={handleAuthSuccess} dark={dark} />}
               {screen==="home" && (
@@ -4373,9 +4377,9 @@ export default function App() {
                   betAmount={betAmount}
                   setBetAmount={setBetAmount}
                   tokens={profile.tokens}
-                  onSelectMode={(mode) => {
+                  onSelectMode={(mode, bet) => {
                     setScreen("home");
-                    connectToServer(mode);
+                    connectToServer(mode, undefined, undefined, bet);
                   }}
                 />
               )}
@@ -4432,8 +4436,8 @@ export default function App() {
         </div>
 
         {/* Alt Navigasyon */}
-        {screen !== "auth" && screen !== "result" && screen !== "game" && (
-          <div style={{ background:c.panel, borderTop:`1px solid ${c.border}`, padding:"8px 0 16px", display:"flex", justifyContent:"space-evenly", alignItems:"center", zIndex:50 }}>
+        {hasBottomNav && (
+          <div style={{ background:c.panel, borderTop:`1px solid ${c.border}`, padding:"8px 0 calc(16px + env(safe-area-inset-bottom))", display:"flex", justifyContent:"space-evenly", alignItems:"center", zIndex:50 }}>
             {TABS.map(({ id, Icon, label })=>{
               const isCenter = id === "modes";
               const active = screen===id;

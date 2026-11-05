@@ -1,12 +1,11 @@
 # 🎲 Yat Dice — 3D Gerçek Zamanlı Çevrimiçi Zar & Strateji Oyunu
 
-**Yat Dice**, **Go (WebSocket + REST API)**, **React 19 (TypeScript + Motion)** ve **PostgreSQL 15** kullanılarak geliştirilmiş, sunucu otoriteli (*server-authoritative*), gerçek zamanlı çevrimiçi, yapay zeka destekli ve **Apple App Store & Google Play Store** politikalarına tam uyumlu bir 5 zar (Yatzy) strateji oyunudur.
+**Yat Dice**, **Go (WebSocket + REST API)**, **React 19 (TypeScript + Motion)** ve **PostgreSQL 15** kullanılarak geliştirilmiş, sunucu otoriteli (*server-authoritative*), gerçek zamanlı çevrimiçi ve yapay zeka destekli bir 5 zar strateji oyunudur.
 
-![Go](https://img.shields.io/badge/Backend-Go_1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Backend-Go_1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)
 ![React](https://img.shields.io/badge/Frontend-React_19_+_TypeScript-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![WebSocket](https://img.shields.io/badge/Realtime-WebSocket-010101?style=for-the-badge)
-![Store Ready](https://img.shields.io/badge/App_Store_%26_Google_Play-Compliance_Ready-2ecc71?style=for-the-badge)
 
 ---
 
@@ -40,7 +39,7 @@
 
 ## 📱 App Store & Google Play Store Uyumluluk (Compliance) Özellikleri
 
-Uygulama, **Apple App Store Review Guidelines** ve **Google Play Developer Program Policies** denetimlerinden ceza veya red (*rejection*) almadan geçecek şekilde donatılmıştır:
+Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Uygulama henüz mağazaya gönderilmeye hazır değildir; yerel Android/iOS projesi, Sign in with Apple, sunucu tarafı engelleme, moderasyon, e-posta ile şifre sıfırlama ve web'den hesap silme sayfası eksiktir:
 
 1. **Uygulama İçi Kalıcı Hesap ve Veri Silme (Apple Guideline 5.1.1(v) & Google Play Data Safety):**
    - Kullanıcılar **Anasayfa &rarr; Profili Özelleştir &rarr; 🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil** adımıyla hesaplarını, profillerini, arkadaşlıklarını ve tüm verilerini (`POST /profile/delete`) kalıcı olarak silebilir.
@@ -83,7 +82,7 @@ YatDice/
 
 ## 🚀 Kurulum ve Çalıştırma Rehberi
 
-Projeyi kendi bilgisayarınızda çalıştırmak için **Docker Desktop**, **Go (1.22+)** ve **Node.js (18+)** kurulu olmalıdır.
+Projeyi kendi bilgisayarınızda çalıştırmak için **Docker Desktop**, **Go (1.26.10+)** ve **Node.js (20.19+ veya 22.12+)** kurulu olmalıdır.
 
 ### 1. Veritabanını Başlatın (PostgreSQL)
 Proje ana dizininde (`YatDice/`) terminali açın ve Docker ile PostgreSQL'i ayağa kaldırın:
@@ -118,6 +117,15 @@ npm install
 npm run dev
 ```
 Tarayıcınızdan terminalde belirtilen adrese (genellikle `http://localhost:5173`) giderek oyuna başlayabilirsiniz.
+
+### Sık Karşılaşılan Sorunlar
+| Belirti | Çözüm |
+| :--- | :--- |
+| Backend `Güvenli olmayan yapılandırma` diyerek kapanıyor | Kök dizinde `.env` yok. `cp .env.example .env` komutunu çalıştırın. |
+| `Veritabanına ulaşılamıyor` | Docker Desktop'ı açın ve `docker compose up -d` çalıştırın. |
+| `password authentication failed` | 5432 portunu başka bir PostgreSQL kullanıyor olabilir; onu durdurun. |
+| Uygulamada `Sunucuya ulaşılamadı` | Backend çalışmıyor. `http://localhost:8080/health` adresini kontrol edin. |
+| Google butonu görünmüyor | `VITE_GOOGLE_CLIENT_ID` tanımlı değil; yerelde misafir veya kayıt ile giriş yapabilirsiniz. |
 
 ---
 

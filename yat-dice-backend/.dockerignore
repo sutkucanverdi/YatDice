@@ -1,0 +1,6 @@
+.env
+.env.*
+*.exe
+*_test.go
+Dockerfile
+.dockerignore
