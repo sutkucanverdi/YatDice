@@ -63,17 +63,32 @@ func normalizeBet(raw interface{}) int {
 	return 0
 }
 
+func isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	allowedOrigin := strings.TrimSpace(os.Getenv("ALLOWED_ORIGIN"))
+	if allowedOrigin == "*" {
+		return true
+	}
+	if allowedOrigin != "" {
+		for _, item := range strings.Split(allowedOrigin, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), origin) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.HasPrefix(origin, "http://localhost") ||
+		strings.HasPrefix(origin, "https://localhost") ||
+		strings.HasPrefix(origin, "http://127.0.0.1") ||
+		strings.HasPrefix(origin, "capacitor://localhost") ||
+		strings.HasPrefix(origin, "ionic://localhost")
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
-		if allowedOrigin != "" {
-			return origin == allowedOrigin
-		}
-		return strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")
+		return isOriginAllowed(r.Header.Get("Origin"))
 	},
 }
 
@@ -200,7 +215,33 @@ type Credentials struct {
 	Email    string `json:"email"`
 }
 
+func loadDotEnv(paths ...string) {
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			k := strings.TrimSpace(parts[0])
+			v := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+			if k != "" && os.Getenv(k) == "" {
+				_ = os.Setenv(k, v)
+			}
+		}
+	}
+}
+
 func initDB() {
+	loadDotEnv(".env", "../.env")
+	jwtKey = []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
 	connStr := getEnv("DATABASE_URL", "host=localhost port=5432 user=yatzy_user password=yatzy_password dbname=yatzy_gamedb sslmode=disable")
 
 	var err error
@@ -1351,8 +1392,16 @@ func createTables() {
 }
 
 func setupCORS(w *http.ResponseWriter, r *http.Request) bool {
-	allowedOrigin := getEnv("ALLOWED_ORIGIN", "*")
-	(*w).Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	allowedOrigin := strings.TrimSpace(getEnv("ALLOWED_ORIGIN", "*"))
+	reqOrigin := r.Header.Get("Origin")
+	if allowedOrigin == "*" || allowedOrigin == "" {
+		(*w).Header().Set("Access-Control-Allow-Origin", "*")
+	} else if reqOrigin != "" && isOriginAllowed(reqOrigin) {
+		(*w).Header().Set("Access-Control-Allow-Origin", reqOrigin)
+		(*w).Header().Set("Vary", "Origin")
+	} else {
+		(*w).Header().Set("Access-Control-Allow-Origin", strings.Split(allowedOrigin, ",")[0])
+	}
 	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	if r.Method == "OPTIONS" {
@@ -1594,6 +1643,10 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if trimmed := strings.TrimSpace(req.Username); len(trimmed) >= 2 && len(trimmed) <= 30 {
+		if containsProfanity(trimmed) {
+			http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
+			return
+		}
 		_, err = db.Exec("UPDATE users SET username = $1 WHERE id = $2", trimmed, userID)
 		if err != nil {
 			http.Error(w, "Bu kullanıcı adı zaten kullanılıyor", http.StatusConflict)
@@ -1740,6 +1793,9 @@ func handleOpenCase(w http.ResponseWriter, r *http.Request) {
 // POST /shop/buy : Marketten zar satın alma işlemini sunucuda doğrular
 func handleBuyDice(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
 		return
 	}
 
@@ -1918,6 +1974,9 @@ func handleFriendRequest(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
@@ -1984,6 +2043,9 @@ func handleFriendRespond(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
 	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
@@ -2019,6 +2081,9 @@ func handleFriendRespond(w http.ResponseWriter, r *http.Request) {
 // POST /friends/invite : Arkadaşa özel oda daveti gönderir veya daveti temizler
 func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
 		return
 	}
 

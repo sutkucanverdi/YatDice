@@ -89,16 +89,18 @@ Projeyi kendi bilgisayarınızda çalıştırmak için **Docker Desktop**, **Go 
 Proje ana dizininde (`YatDice/`) terminali açın ve Docker ile PostgreSQL'i ayağa kaldırın:
 
 ```bash
-docker-compose up -d
+docker compose up -d
+# (Eski Docker Compose sürümlerinde: docker-compose up -d)
 ```
 
 ### 2. Go Backend Sunucusunu Başlatın
-Yeni bir terminal açıp backend klasörüne gidin ve sunucuyu başlatın (tablolar ve şema güncellemeleri ilk çalışmada otomatik oluşturulur):
+Yeni bir terminal açıp backend klasörüne gidin ve paketin tamamını çalıştırarak sunucuyu başlatın (tablolar, şema güncellemeleri ve varsa `.env` değişkenleri ilk çalışmada otomatik yüklenir):
 
 ```bash
 cd yat-dice-backend
-go run main.go
+go run .
 ```
+> **Not:** Paketteki tüm Go kaynak dosyalarının birlikte derlenmesi için `go run main.go` yerine her zaman **`go run .`** komutunu kullanın.
 > Çıktıda `✅ PostgreSQL veritabanına başarıyla bağlanıldı!`, `📦 Veritabanı tabloları ve şema güncellemeleri hazırlandı!` ve `🚀 Yat Dice Sunucusu 8080 portunda aktif...` mesajlarını görmelisiniz.
 
 ### 3. React Frontend Uygulamasını Başlatın

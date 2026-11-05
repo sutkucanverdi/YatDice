@@ -906,7 +906,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         onLogin(data.username, data.token);
         return;
       }
-    } catch (_) {
+    } catch {
       // Sunucu kapalıysa yerel kalıcı misafir kimliğini kullan
     } finally {
       setLoading(false);
@@ -1164,7 +1164,7 @@ function HomeScreen({
       setShowDeleteConfirm(false);
       emitToast("Hesabınız ve tüm verileriniz kalıcı olarak silindi.");
       onLogout();
-    } catch (_) {
+    } catch {
       emitToast("Sunucuya ulaşılamadı.");
     } finally {
       setDeletingAccount(false);
@@ -1187,7 +1187,7 @@ function HomeScreen({
         const data = await res.json();
         setLeaderboard(data.leaders || []);
       }
-    } catch (_) {
+    } catch {
     } finally {
       setLoadingLb(false);
     }
@@ -2325,7 +2325,7 @@ function GameScreen({
           },
           body: JSON.stringify({ username: opponentName || "Rakip" })
         });
-      } catch (_) {}
+      } catch {}
     } else {
       emitToast(`${opponentName || "Rakip"} için susturma kaldırıldı.`);
     }
@@ -2344,7 +2344,7 @@ function GameScreen({
           reason: "Oyun içi uygunsuz sohbet / davranış bildirimi"
         })
       });
-    } catch (_) {}
+    } catch {}
     setOpponentMuted(true);
     opponentMutedRef.current = true;
     emitToast("Şikayetiniz güvenlik ekibine iletildi ve oyuncu susturuldu.");
@@ -2551,7 +2551,7 @@ function GameScreen({
         }
       }
     };
-  }, [ws, myPlayerIndex, myPlayerId, opponentName, profile.name, profile.seed]);
+  }, [ws, myPlayerIndex, myPlayerId, isMyTurn, opponentName, profile.name, profile.seed, go, onMatchEnd, setProfile]);
 
   const doRoll = () => {
     if (!isMyTurn || rollsLeft===0 || rolling || !ws) return; 
@@ -3484,7 +3484,7 @@ function QuestsScreen({
           setQuestCasePopup(prev => prev ? { ...prev, bonusGold: data.reward } : null);
           return;
         }
-      } catch (_) {}
+      } catch {}
     }
     const reward = Math.floor(Math.random() * 150) + 75;
     setProfile(prev => ({
@@ -3957,7 +3957,7 @@ export default function App() {
     };
   }, []);
 
-  const fetchFriends = async () => {
+  const fetchFriends = React.useCallback(async () => {
     if (!token || token.startsWith("guest_token_")) return;
     try {
       const res = await fetch(`${API_BASE}/friends`, {
@@ -3982,10 +3982,10 @@ export default function App() {
         setOutgoingRequests(data.outgoing || []);
         setGameInvites(data.invites || []);
       }
-    } catch (e) {
+    } catch {
       // Sessizce geç
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (!token || token.startsWith("guest_token_")) {
@@ -3998,7 +3998,7 @@ export default function App() {
     fetchFriends();
     const interval = setInterval(fetchFriends, 5000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, fetchFriends]);
 
   const sendGameInvite = async (friendUserId: number, roomCode: string) => {
     if (!token || token.startsWith("guest_token_")) return;
@@ -4106,7 +4106,7 @@ export default function App() {
         try {
           const parsed = JSON.parse(savedGuest);
           setProfile(prev => ({ ...prev, ...parsed }));
-        } catch (_) {}
+        } catch {}
       } else {
         setProfile(prev => ({ ...prev, lastDailyReward: "" }));
       }
