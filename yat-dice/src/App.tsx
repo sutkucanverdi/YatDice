@@ -583,7 +583,8 @@ function DieFace({ v, size, mat, locked }: { v:DieVal; size:number; mat:DieMat; 
       width:size, height:size, borderRadius:r, background: m.face,
       border: locked ? `2.5px solid ${m.lockColor}` : `1px solid ${m.edge}`,
       boxShadow: `inset 0 1px 4px rgba(255,255,255,0.55), inset 0 -1px 3px ${m.edge}`,
-      position:"relative", overflow:"hidden", backfaceVisibility:"hidden",
+      position:"relative", overflow:"hidden",
+      backfaceVisibility:"hidden", WebkitBackfaceVisibility:"hidden",
     }}>
       <div style={{
         position:"absolute", top:"7%", left:"9%", width:"40%", height:"28%",
@@ -600,45 +601,44 @@ function DieFace({ v, size, mat, locked }: { v:DieVal; size:number; mat:DieMat; 
   );
 }
 
-// ─── 3D Die Component ─────────────────────────────────────────────────────────
+// ─── 3D Die Component (FLIP Layout Bozulması Olmadan Saf GPU 3D Dönüş) ─────────
 function Die3D({
-  state, size, locked, mat, onClick, isRolling = false, index = 0, layoutId, style, isIdle = false
+  state, size, locked, mat, onClick, isRolling = false, index = 0, style, isIdle = false
 }: {
   state:DieState; size:number; locked:boolean; mat:DieMat; onClick?:()=>void; isRolling?:boolean; index?:number; layoutId?:string; style?:React.CSSProperties; isIdle?:boolean;
 }) {
   const h = size / 2;
   const m = MAT[mat];
 
-  const bounceY = isRolling ? [0, -25, 0, -8, 0] : 0; 
-  const scatterX = isRolling ? [0, (index - 2) * 8, 0] : 0; 
-  const tumbleZ = isRolling ? [0, (index % 2 === 0 ? 1 : -1) * 20, 0] : 0; 
+  const showIdle = isIdle && !isRolling;
+  const bounceY = isRolling ? [0, -18, 0, -6, 0] : 0;
+  const tumbleZ = isRolling ? [0, (index % 2 === 0 ? 1 : -1) * 16, 0] : 0;
 
   return (
-    <motion.div
-      layout
-      layoutId={layoutId}
+    <div
       onClick={onClick}
       style={{
-        width:size, height:size, flexShrink:0, perspective:`${size*7}px`,
+        width:size, height:size, flexShrink:0, perspective:`${size*8}px`,
         cursor: onClick?"pointer":"default", position:"relative", zIndex: locked ? 10 : 1,
+        willChange: "transform",
         ...style
       }}
     >
       <motion.div
         animate={
-          isIdle 
-            ? { rotateX: [0, 360], rotateY: [0, 360] }
-            : { rotateX: state.rx, rotateY: state.ry, rotateZ: tumbleZ, y: bounceY, x: scatterX }
+          showIdle
+            ? { rotateX: [0, 360], rotateY: [0, 360], rotateZ: 0, y: 0 }
+            : { rotateX: state.rx, rotateY: state.ry, rotateZ: tumbleZ, y: bounceY }
         }
         transition={
-          isIdle
-            ? { duration: 6 + index * 0.5, ease: "linear", repeat: Infinity }
-            : { duration: 0.8, ease: "easeOut", delay: index * 0.04 }
+          showIdle
+            ? { duration: 7 + index * 0.6, ease: "linear", repeat: Infinity }
+            : { duration: 0.72, ease: [0.22, 1, 0.36, 1], delay: isRolling ? index * 0.03 : 0 }
         }
-        style={{ width:"100%", height:"100%", transformStyle:"preserve-3d", position:"relative" }}
+        style={{ width:"100%", height:"100%", transformStyle:"preserve-3d", position:"relative", willChange:"transform" }}
       >
         {FACE_DEFS.map(({ v, t })=>(
-          <div key={v} style={{ position:"absolute", width:size, height:size, transform: t(h) }}>
+          <div key={v} style={{ position:"absolute", width:size, height:size, transform: t(h), backfaceVisibility:"hidden", WebkitBackfaceVisibility:"hidden" }}>
             <DieFace v={v} size={size} mat={mat} locked={locked}/>
           </div>
         ))}
@@ -646,10 +646,10 @@ function Die3D({
 
       <motion.div
         animate={{ 
-          opacity: locked ? 0.18 : (isRolling ? [0.28, 0.1, 0.28, 0.15, 0.28] : 0.28),
-          scale: isRolling ? [1, 0.6, 1, 0.8, 1] : 1
+          opacity: locked ? 0.18 : (isRolling ? [0.26, 0.1, 0.26, 0.16, 0.26] : 0.26),
+          scale: isRolling ? [1, 0.68, 1, 0.85, 1] : 1
         }}
-        transition={{ duration: 0.8, delay: index * 0.04 }}
+        transition={{ duration: 0.72, delay: isRolling ? index * 0.03 : 0 }}
         style={{
           position:"absolute", bottom:-10, left:"12%", right:"12%", height:8, borderRadius:"50%",
           background:"rgba(0,0,0,1)", filter:"blur(5px)", pointerEvents:"none",
@@ -666,7 +666,7 @@ function Die3D({
           <Lock size={10} color="#fff" strokeWidth={2.5}/>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -2410,18 +2410,18 @@ function GameScreen({
         const syncedLocked: boolean[] = data.locked || [false,false,false,false,false];
         setLocked(syncedLocked);
         setRolling(true);
+        setRollsLeft(typeof data.rollsLeft === "number" ? data.rollsLeft : 0);
         
         const newPos = generateRandomPositions();
         setDieStates(prev => prev.map((s,i)=>{
-          if (syncedLocked[i]) return { ...s, px: newPos[i].x, py: newPos[i].y };
+          if (syncedLocked[i]) return s;
           const v = data.dices[i] as DieVal; 
           const t = targetRot(v, s.rx, s.ry);
           return { value:v, rx:t.rx, ry:t.ry, px: newPos[i].x, py: newPos[i].y };
         }));
         setTimeout(()=>{
           setRolling(false);
-          setRollsLeft(typeof data.rollsLeft === "number" ? data.rollsLeft : 0);
-        }, 850);
+        }, 760);
       }
       else if (data.type === "TOGGLE_LOCK") {
         setLocked(data.locked);
@@ -2776,8 +2776,8 @@ function GameScreen({
       </AnimatePresence>
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "15px", gap: 15 }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 360, alignItems: "center", justifyContent: "space-between" }}>
-           <div style={{ width: 44, flexShrink: 0 }}></div>
+        <div style={{ display: "flex", width: "100%", maxWidth: 360, height: 220, alignItems: "center", justifyContent: "space-between" }}>
+           <div style={{ width: 44, height: 220, flexShrink: 0 }}></div>
 
            {/* Yuvarlak Zar Tepsisi */}
            <div style={{
@@ -2786,15 +2786,21 @@ function GameScreen({
               border: `12px solid ${dark?"#5c3a21":"#8e5a32"}`,
               boxShadow: "inset 0 10px 20px rgba(0,0,0,0.5), 0 8px 16px rgba(0,0,0,0.3)",
               position: "relative", display: "flex", alignItems: "center", justifyContent: "center",
-              overflow: "hidden",
+              overflow: "hidden", transform: "translateZ(0)",
            }}>
               <div style={{ position:"absolute", inset:0, borderRadius:"50%", opacity:0.4, backgroundImage:`repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px)` }}/>
               <div style={{ position: "absolute", inset: 0, zIndex: 2 }}>
                 {dieStates.map((s, i) => !locked[i] && (
                    <Die3D
-                     key={`die-${i}`} layoutId={`die-layout-${i}`} index={i} state={s} size={32}
-                     locked={false} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={rolling} isIdle={rollsLeft === 3}
-                     style={{ position: "absolute", left: `calc(50% - 16px + ${s.px}px)`, top: `calc(50% - 16px + ${s.py}px)` }}
+                     key={`tray-die-${i}`} index={i} state={s} size={32}
+                     locked={false} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={rolling} isIdle={rollsLeft === 3 && !rolling}
+                     style={{
+                       position: "absolute",
+                       left: "50%", top: "50%",
+                       marginLeft: -16, marginTop: -16,
+                       transform: `translate3d(${s.px}px, ${s.py}px, 0)`,
+                       transition: "transform 0.55s cubic-bezier(0.22, 1, 0.36, 1)",
+                     }}
                    />
                 ))}
               </div>
@@ -2817,9 +2823,9 @@ function GameScreen({
               </AnimatePresence>
            </div>
 
-           <div style={{ display: "flex", flexDirection: "column", gap: 8, width: 44, justifyContent: "center", flexShrink: 0, position: "relative" }}>
+           <div style={{ display: "flex", flexDirection: "column", gap: 8, width: 44, height: 220, alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" }}>
               {dieStates.map((s, i) => locked[i] && (
-                 <Die3D key={`die-${i}`} layoutId={`die-layout-${i}`} index={i} state={s} size={32} locked={true} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={false} isIdle={false} />
+                 <Die3D key={`locked-die-${i}`} index={i} state={s} size={32} locked={true} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={false} isIdle={false} />
               ))}
            </div>
         </div>
