@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -29,6 +30,10 @@ const (
 	PongWait            = 60 * time.Second
 	PingPeriod          = (PongWait * 9) / 10
 	BcryptCost          = 10 // Cost 14 DoS riskine yol açtığı için 10'a çekildi
+
+	defaultDevJWTSecret    = "dev-secret-change-in-production"
+	minJWTSecretLength     = 32
+	maxWSMessagesPerSecond = 20 // Tek bağlantıdan saniyede kabul edilen en fazla mesaj
 )
 
 var allowedCategories = map[string]bool{
@@ -118,6 +123,11 @@ func containsProfanity(s string) bool {
 	return false
 }
 
+// Kullanıcı adı küfür içeremez ve sistem botunu taklit edemez
+func isForbiddenUsername(s string) bool {
+	return containsProfanity(s) || strings.Contains(strings.ToLower(s), "yatbot")
+}
+
 func sanitizeChatMessage(raw string) string {
 	s := strings.TrimSpace(raw)
 	s = strings.ReplaceAll(s, "<", "")
@@ -186,8 +196,33 @@ var (
 	mu             sync.Mutex // Sadece eşleştirme (matchmaking) kuyruğunu ve davetleri korur
 	roomCounter    int
 	db             *sql.DB
-	jwtKey         = []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
+	jwtKey         []byte
 )
+
+// Yalnızca APP_ENV açıkça "development" ise geliştirme modundayız.
+// Değişken unutulursa sunucu güvenli tarafta (üretim kurallarıyla) çalışır.
+func isDevelopment() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "development")
+}
+
+// Üretimde güçlü bir JWT_SECRET zorunludur; geliştirmede boşsa geçici rastgele anahtar üretilir.
+func resolveJWTSecret(secret string, dev bool) ([]byte, error) {
+	if dev {
+		if secret != "" {
+			return []byte(secret), nil
+		}
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, err
+		}
+		log.Println("⚠️ JWT_SECRET tanımlı değil: geçici anahtar üretildi, sunucu yeniden başlayınca oturumlar kapanır.")
+		return key, nil
+	}
+	if secret == defaultDevJWTSecret || len(secret) < minJWTSecretLength {
+		return nil, fmt.Errorf("JWT_SECRET en az %d karakter olmalı ve varsayılan değer kullanılmamalı (yerelde APP_ENV=development ayarlayın)", minJWTSecretLength)
+	}
+	return []byte(secret), nil
+}
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -241,10 +276,20 @@ func loadDotEnv(paths ...string) {
 
 func initDB() {
 	loadDotEnv(".env", "../.env")
-	jwtKey = []byte(getEnv("JWT_SECRET", "dev-secret-change-in-production"))
-	connStr := getEnv("DATABASE_URL", "host=localhost port=5432 user=yatzy_user password=yatzy_password dbname=yatzy_gamedb sslmode=disable")
-
+	dev := isDevelopment()
 	var err error
+	jwtKey, err = resolveJWTSecret(os.Getenv("JWT_SECRET"), dev)
+	if err != nil {
+		log.Fatal("Güvenli olmayan yapılandırma: ", err)
+	}
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		if !dev {
+			log.Fatal("Güvenli olmayan yapılandırma: üretimde DATABASE_URL zorunludur (yerelde APP_ENV=development ayarlayın)")
+		}
+		connStr = "host=localhost port=5432 user=yatzy_user password=yatzy_password dbname=yatzy_gamedb sslmode=disable"
+	}
+
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal("Veritabanı bağlantı hatası:", err)
@@ -882,23 +927,57 @@ func (r *Room) runBotTurn(expectedRound int) {
 	r.Mu.Unlock()
 }
 
+// WebSocket kimliğini token ve veritabanından çözer; kullanıcı adı istemciden alınmaz
+func authenticateWebSocket(r *http.Request) (int, string, error) {
+	uidStr, err := parseTokenString(r.URL.Query().Get("token"))
+	if err != nil {
+		return 0, "", err
+	}
+	userID, err := strconv.Atoi(uidStr)
+	if err != nil || userID <= 0 {
+		return 0, "", fmt.Errorf("geçersiz kullanıcı")
+	}
+	var username string
+	if err := db.QueryRow(`SELECT username FROM users WHERE id = $1`, userID).Scan(&username); err != nil {
+		return 0, "", err
+	}
+	return userID, username, nil
+}
+
+// Bağlantı başına saniyelik mesaj sayacı (yalnızca o bağlantının okuma döngüsünden çağrılır)
+type wsMessageBudget struct {
+	windowStart time.Time
+	count       int
+}
+
+func (b *wsMessageBudget) allow(now time.Time) bool {
+	if now.Sub(b.windowStart) >= time.Second {
+		b.windowStart = now
+		b.count = 0
+	}
+	b.count++
+	return b.count <= maxWSMessagesPerSecond
+}
+
 func handleConnections(w http.ResponseWriter, r *http.Request) {
+	if !generalLimiter.Allow(getClientIP(r)) {
+		http.Error(w, "Çok fazla istek gönderdiniz. Lütfen kısa bir süre bekleyin.", http.StatusTooManyRequests)
+		return
+	}
+
+	userID, username, err := authenticateWebSocket(r)
+	if err != nil {
+		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		return
+	}
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket hatası:", err)
 		return
 	}
 
-	// Token varsa kullanıcıyı doğrula
-	tokenParam := r.URL.Query().Get("token")
-	userID := 0
-	if tokenParam != "" && !strings.HasPrefix(tokenParam, "guest_token_") {
-		if uidStr, err := parseTokenString(tokenParam); err == nil {
-			userID, _ = strconv.Atoi(uidStr)
-		}
-	}
-
-	client := &Client{Conn: ws, UserID: userID}
+	client := &Client{Conn: ws, UserID: userID, Username: username}
 
 	// Ping/Pong ve ReadDeadline ayarları (Hayalet bağlantıları tespit eder)
 	ws.SetReadLimit(8192)
@@ -980,6 +1059,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	var budget wsMessageBudget
 	for {
 		var msg map[string]interface{}
 		err := ws.ReadJSON(&msg)
@@ -988,8 +1068,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(PongWait))
 
-		if username, ok := msg["username"].(string); ok && strings.TrimSpace(username) != "" {
-			client.Username = strings.TrimSpace(username)
+		if !budget.allow(time.Now()) {
+			log.Printf("WebSocket mesaj sınırı aşıldı, bağlantı kapatılıyor (kullanıcı %d)", client.UserID)
+			break
 		}
 
 		// 1. EŞLEŞTİRME VE ODA KURMA AKSİYONLARI
@@ -1039,6 +1120,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				if !hasEnoughTokensDB(client.UserID, requestedBet) {
 					requestedBet = 0
 					client.BetAmount = 0
+				}
+				// Aynı hesabın ikinci bağlantıdan kendisiyle eşleşmesini önle
+				if waitingClient != nil && waitingClient != client && waitingClient.UserID == client.UserID {
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Bu hesap zaten eşleşme kuyruğunda!"})
+					mu.Unlock()
+					continue
 				}
 				// Aynı oyuncunun kendi kendisiyle eşleşmesini önle
 				if waitingClient == nil || waitingClient == client {
@@ -1106,7 +1193,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				code := strings.ToUpper(strings.TrimSpace(codeRaw))
 				entry, exists := privateRooms[code]
 
-				if exists && entry.Host != nil && entry.Host != client {
+				if exists && entry.Host != nil && entry.Host != client && entry.Host.UserID != client.UserID {
 					matchBet := entry.BetAmount
 					if !deductBothBetsDB(entry.Host.UserID, client.UserID, matchBet) {
 						matchBet = 0
@@ -1383,9 +1470,13 @@ func createTables() {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(blocker_id, blocked_username)
 		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (LOWER(username));`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique ON users (google_id) WHERE google_id <> '';`,
 	}
 	for _, m := range migrations {
-		_, _ = db.Exec(m)
+		if _, err := db.Exec(m); err != nil {
+			log.Printf("⚠️ Şema güncellemesi uygulanamadı: %v | %s", err, m)
+		}
 	}
 
 	fmt.Println("📦 Veritabanı tabloları ve şema güncellemeleri hazırlandı!")
@@ -1431,7 +1522,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
 		return
 	}
-	if containsProfanity(creds.Username) {
+	if isForbiddenUsername(creds.Username) {
 		http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
 		return
 	}
@@ -1643,7 +1734,7 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if trimmed := strings.TrimSpace(req.Username); len(trimmed) >= 2 && len(trimmed) <= 30 {
-		if containsProfanity(trimmed) {
+		if isForbiddenUsername(trimmed) {
 			http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
 			return
 		}
@@ -2304,15 +2395,27 @@ func resetLoginFailures(username string) {
 	loginLockMu.Unlock()
 }
 
-func getClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+// X-Forwarded-For istemci tarafından sahte doldurulabilir. Yalnızca önümüzdeki güvenilir
+// proxy sayısı kadar sağdan sayılır; proxy yoksa (0) başlık tamamen yok sayılır.
+func clientIPFrom(remoteAddr, forwardedFor string, trustedProxies int) string {
+	if trustedProxies > 0 && forwardedFor != "" {
+		parts := strings.Split(forwardedFor, ",")
+		if len(parts) >= trustedProxies {
+			if ip := strings.TrimSpace(parts[len(parts)-trustedProxies]); ip != "" {
+				return ip
+			}
+		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return remoteAddr
 	}
 	return host
+}
+
+func getClientIP(r *http.Request) string {
+	trustedProxies, _ := strconv.Atoi(os.Getenv("TRUSTED_PROXY_COUNT"))
+	return clientIPFrom(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), trustedProxies)
 }
 
 // applySecurityAndRateLimit: Tüm HTTP uç noktalarına güvenlik başlıkları,
@@ -2413,6 +2516,68 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 
 // ─── 3. GOOGLE İLE GİRİŞ / KAYIT SİSTEMİ ──────────────────────────────────────
 
+var googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
+
+type googleIdentity struct {
+	Sub   string
+	Email string
+	Name  string
+}
+
+// Google ID token'ını doğrular. allowedAudiences web, Android ve iOS istemci kimliklerini içerebilir.
+func verifyGoogleIDToken(credential string, allowedAudiences []string) (googleIdentity, error) {
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(googleTokenInfoURL + "?id_token=" + url.QueryEscape(credential))
+	if err != nil {
+		return googleIdentity{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return googleIdentity{}, fmt.Errorf("tokeninfo durumu: %d", resp.StatusCode)
+	}
+
+	var info struct {
+		Iss           string      `json:"iss"`
+		Aud           string      `json:"aud"`
+		Sub           string      `json:"sub"`
+		Email         string      `json:"email"`
+		EmailVerified interface{} `json:"email_verified"`
+		Name          string      `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return googleIdentity{}, err
+	}
+
+	audienceOK := false
+	for _, aud := range allowedAudiences {
+		if aud == info.Aud {
+			audienceOK = true
+			break
+		}
+	}
+	if !audienceOK {
+		return googleIdentity{}, fmt.Errorf("beklenmeyen istemci kimliği")
+	}
+	if info.Iss != "accounts.google.com" && info.Iss != "https://accounts.google.com" {
+		return googleIdentity{}, fmt.Errorf("beklenmeyen token yayıncısı")
+	}
+	email := strings.ToLower(strings.TrimSpace(info.Email))
+	if info.Sub == "" || email == "" || fmt.Sprint(info.EmailVerified) != "true" {
+		return googleIdentity{}, fmt.Errorf("doğrulanmış Google kimliği yok")
+	}
+	return googleIdentity{Sub: info.Sub, Email: email, Name: strings.TrimSpace(info.Name)}, nil
+}
+
+func splitCSV(raw string) []string {
+	items := []string{}
+	for _, item := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
+}
+
 func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
 		return
@@ -2421,65 +2586,46 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audiences := splitCSV(os.Getenv("GOOGLE_CLIENT_ID"))
+	if len(audiences) == 0 {
+		http.Error(w, "Google ile giriş bu sunucuda etkin değil", http.StatusServiceUnavailable)
+		return
+	}
+
 	var req struct {
 		Credential string `json:"credential"`
-		Email      string `json:"email"`
-		Name       string `json:"name"`
-		GoogleID   string `json:"googleId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Credential == "" {
+		http.Error(w, "Google kimlik bilgisi gerekli", http.StatusBadRequest)
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(req.Email))
-	displayName := strings.TrimSpace(req.Name)
-	googleID := strings.TrimSpace(req.GoogleID)
-
-	if req.Credential != "" {
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + req.Credential)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			http.Error(w, "Google oturumu doğrulanamadı", http.StatusUnauthorized)
-			return
-		}
-		defer resp.Body.Close()
-		var gInfo struct {
-			Sub   string `json:"sub"`
-			Email string `json:"email"`
-			Name  string `json:"name"`
-			Aud   string `json:"aud"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&gInfo); err != nil || gInfo.Sub == "" {
-			http.Error(w, "Google profil verisi okunamadı", http.StatusUnauthorized)
-			return
-		}
-		if expectedClientID := getEnv("GOOGLE_CLIENT_ID", ""); expectedClientID != "" && gInfo.Aud != expectedClientID {
-			http.Error(w, "Geçersiz Google istemci kimliği", http.StatusUnauthorized)
-			return
-		}
-		googleID = gInfo.Sub
-		email = strings.ToLower(strings.TrimSpace(gInfo.Email))
-		if gInfo.Name != "" {
-			displayName = strings.TrimSpace(gInfo.Name)
-		}
-	}
-
-	if email == "" || !strings.Contains(email, "@") {
-		http.Error(w, "Geçerli bir Google e-posta adresi gerekli", http.StatusBadRequest)
+	identity, err := verifyGoogleIDToken(req.Credential, audiences)
+	if err != nil {
+		log.Println("Google token doğrulanamadı:", err)
+		http.Error(w, "Google oturumu doğrulanamadı", http.StatusUnauthorized)
 		return
 	}
-	if googleID == "" {
-		googleID = "google_" + email
-	}
+	email := identity.Email
+	displayName := identity.Name
+	googleID := identity.Sub
 
 	var userID int
 	var username string
-	err := db.QueryRow(`
-		SELECT id, username FROM users
-		WHERE google_id = $1 OR (LOWER(email) = LOWER($2) AND email <> '')
-		LIMIT 1
-	`, googleID, email).Scan(&userID, &username)
+	err = db.QueryRow(`SELECT id, username FROM users WHERE google_id = $1 LIMIT 1`, googleID).Scan(&userID, &username)
+
+	// /register e-postaları doğrulanmadığı için hesaplar e-postaya göre otomatik bağlanmaz
+	if err != nil {
+		var emailTaken bool
+		if qErr := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1))`, email).Scan(&emailTaken); qErr != nil {
+			http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+			return
+		}
+		if emailTaken {
+			http.Error(w, "Bu e-posta ile kayıtlı bir hesap var. Lütfen kullanıcı adı ve şifrenizle giriş yapın.", http.StatusConflict)
+			return
+		}
+	}
 
 	if err != nil {
 		baseName := displayName
@@ -2492,7 +2638,7 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 			}
 			return -1
 		}, baseName)
-		if len(baseName) < 3 {
+		if len(baseName) < 3 || isForbiddenUsername(baseName) {
 			baseName = "Oyuncu"
 		}
 		if len(baseName) > 18 {
@@ -2523,8 +2669,6 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 			VALUES ($1, 150, 300, 2, 'ivory', 'ivory')
 			ON CONFLICT (user_id) DO NOTHING
 		`, userID)
-	} else {
-		_, _ = db.Exec(`UPDATE users SET google_id = $1, email = COALESCE(NULLIF(email, ''), $2) WHERE id = $3`, googleID, email, userID)
 	}
 
 	tokenString, err := issueJWTForUser(userID, 30)
@@ -2606,7 +2750,7 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"message": "Şifre sıfırlama kodu oluşturuldu (10 dakika geçerli).",
 	}
-	if getEnv("APP_ENV", "development") != "production" {
+	if isDevelopment() {
 		resp["resetCode"] = code
 	}
 	w.Header().Set("Content-Type", "application/json")

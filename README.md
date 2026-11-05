@@ -31,7 +31,7 @@
 - **🔍 3D Büyük Zar Önizleme & Koleksiyon Marketi:** Koleksiyondan zar alırken zara tıklandığında açılan büyük 3D etkileşimli önizleme sahnesi (*zarı test ederek döndürme* ve *"Satın Al / Vazgeç"* onayı). **Kemik, Ahşap, Mermer, Obsidyen, Kızıl Yakut ve Altın Kraliyet** zar setleri.
 
 ### 🔐 Kimlik Doğrulama & Kurumsal Güvenlik Önlemleri
-- **🌐 Google Hesabıyla Kayıt & Giriş (`/auth/google`):** Google OAuth ID Token doğrulaması veya hızlı Google e-posta bağlantısı ile tek tıkla kayıt/giriş.
+- **🌐 Google Hesabıyla Kayıt & Giriş (`/auth/google`):** Google Identity Services ile giriş; sunucu ID token'ı, istemci kimliğini ve doğrulanmış e-postayı denetler.
 - **🎲 Cihazda Kalıcı Misafir Hesabı (`/auth/guest`):** Misafir olarak giriş yapan oyuncular uygulamadan çıkıp tekrar girse bile cihaz kimliği (`deviceId`) sayesinde aynı misafir hesabında ve ilerlemesinde kalır.
 - **🔑 Şifre Sıfırlama (`/auth/forgot-password` & `/auth/reset-password`):** 6 haneli tek kullanımlık doğrulama kodu ve sabit zamanlı (`subtle.ConstantTimeCompare`) karşılaştırma ile güvenli şifre kurtarma.
 - **🛡️ Rate Limiting, Brute-Force Koruması & Güvenlik Başlıkları:** IP bazlı Token-Bucket hız sınırlandırma, ardışık 5 hatalı girişte 5 dakika geçici hesap kilitleme, zamanlama saldırısı (`timing attack`) kalkanı, `MaxBytesReader` (256 KB payload sınırı), `http.Server` Slowloris zaman aşımları ve güvenlik başlıkları (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`).
@@ -94,7 +94,13 @@ docker compose up -d
 ```
 
 ### 2. Go Backend Sunucusunu Başlatın
-Yeni bir terminal açıp backend klasörüne gidin ve paketin tamamını çalıştırarak sunucuyu başlatın (tablolar, şema güncellemeleri ve varsa `.env` değişkenleri ilk çalışmada otomatik yüklenir):
+Proje ana dizininde örnek ortam dosyasını kopyalayın. `APP_ENV=development` tanımlı değilse sunucu üretim kurallarıyla çalışır ve güçlü `JWT_SECRET` ile `DATABASE_URL` olmadan açılmaz:
+
+```bash
+cp .env.example .env
+```
+
+Yeni bir terminal açıp backend klasörüne gidin ve paketin tamamını çalıştırarak sunucuyu başlatın (tablolar, şema güncellemeleri ve `.env` değişkenleri ilk çalışmada otomatik yüklenir):
 
 ```bash
 cd yat-dice-backend
@@ -117,18 +123,20 @@ Tarayıcınızdan terminalde belirtilen adrese (genellikle `http://localhost:517
 
 ## ⚙️ Ortam Değişkenleri (`.env`)
 
-Yerel geliştirmede hiçbir ek ayar yapmadan varsayılan değerlerle çalıştırabilirsiniz. Üretim (*Production*) ortamına çıkarken kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalayıp kendi değerlerinizi tanımlayabilirsiniz:
+Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalayın. Üretimde `APP_ENV=production`, güçlü bir `JWT_SECRET` ve `DATABASE_URL` zorunludur; eksikse sunucu açılmaz. `VITE_*` değişkenleri `yat-dice/.env` dosyasına yazılır:
 
 | Değişken | Açıklama | Varsayılan (Yerel) |
 | :--- | :--- | :--- |
 | `PORT` | Go backend sunucu portu | `8080` |
-| `APP_ENV` | Çalışma ortamı (`development` veya `production`) | `development` |
-| `DATABASE_URL` | PostgreSQL bağlantı cümlesi | `host=localhost port=5432 user=yatzy_user password=yatzy_password dbname=yatzy_gamedb sslmode=disable` |
-| `JWT_SECRET` | JWT token imzalama gizli anahtarı (Üretimde zorunlu!) | `dev-secret-change-in-production` |
-| `GOOGLE_CLIENT_ID` | İsteğe bağlı Google OAuth Client ID doğrulaması | *(Boş bırakılabilir)* |
+| `APP_ENV` | Yalnızca `development` değeri geliştirme modunu açar; boşsa üretim kuralları geçerlidir | *(Boş = üretim)* |
+| `DATABASE_URL` | PostgreSQL bağlantı cümlesi (Üretimde zorunlu) | Geliştirmede `host=localhost port=5432 user=yatzy_user password=yatzy_password dbname=yatzy_gamedb sslmode=disable` |
+| `JWT_SECRET` | JWT imzalama anahtarı (Üretimde en az 32 karakter, zorunlu) | Geliştirmede boşsa geçici rastgele anahtar |
+| `GOOGLE_CLIENT_ID` | Virgülle ayrılmış Google istemci kimlikleri (web, Android, iOS) | *(Boşsa Google girişi kapalı)* |
+| `TRUSTED_PROXY_COUNT` | Sunucunun önündeki güvenilir proxy sayısı; `0` ise `X-Forwarded-For` yok sayılır | `0` |
 | `ALLOWED_ORIGIN` | CORS ve WebSocket izin verilen origin (`*` veya domain) | `*` |
 | `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | `http://localhost:8080` |
 | `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | `ws://localhost:8080` |
+| `VITE_GOOGLE_CLIENT_ID` | Web Google giriş butonu için istemci kimliği | *(Boşsa buton gizli)* |
 
 ---
 
@@ -155,7 +163,9 @@ Yerel geliştirmede hiçbir ek ayar yapmadan varsayılan değerlerle çalıştı
 | `GET` | `/privacy` & `/terms` | Mağaza başvuruları için resmi Gizlilik Politikası ve Kullanım Koşulları (HTML) |
 | `GET` | `/health` | Sunucu ve PostgreSQL veritabanı sağlık durumu kontrolü |
 
-### WebSocket (`ws://localhost:8080/play`) Eylemleri
+### WebSocket (`ws://localhost:8080/play?token=<JWT>`) Eylemleri
+Geçerli JWT olmadan bağlantı `401` ile reddedilir; oyuncu adı istemciden değil veritabanından alınır.
+
 - **Eşleşme Komutları:** `QUICK_MATCH`, `BOT_MATCH`, `CREATE_ROOM`, `JOIN_ROOM` (sanal giriş jetonu doğrulamalı)
 - **Oyun İçi Komutlar:** `ROLL_DICE` (Zar at), `TOGGLE_LOCK` (Zar kilitle/aç), `SCORE_SELECTED` (Kategori seç), `EMOJI` (Hızlı emoji), `CHAT` (Canlı sohbet mesajı)
 - **Sunucu Yayını:** Her hamlede güncel zarlar, kilitler, iki oyuncunun skor tabloları, aktif tur, 30 saniyelik tur sayacı ve maç sonu ödülleri tüm odaya senkronize edilir.

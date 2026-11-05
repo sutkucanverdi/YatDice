@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -9,6 +9,7 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
+const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 // ─── Web Audio API Ses Efekt Motoru (Harici MP3 Gerektirmez) ──────────────────
 let sharedAudioCtx: AudioContext | null = null;
@@ -807,6 +808,68 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
   );
 }
 
+// ─── Google Identity Services (Gerçek Google Girişi) ──────────────────────────
+type GoogleIdentityApi = {
+  initialize: (config: { client_id: string; callback: (response: { credential: string }) => void }) => void;
+  renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
+};
+
+let googleIdentityPromise: Promise<GoogleIdentityApi> | null = null;
+
+function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
+  if (!googleIdentityPromise) {
+    googleIdentityPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.onload = () => {
+        const api = (window as unknown as { google?: { accounts?: { id?: GoogleIdentityApi } } }).google?.accounts?.id;
+        if (api) resolve(api);
+        else reject(new Error("Google girişi yüklenemedi"));
+      };
+      script.onerror = () => {
+        googleIdentityPromise = null;
+        reject(new Error("Google girişi yüklenemedi"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return googleIdentityPromise;
+}
+
+function GoogleSignInButton({ dark, onCredential, onError }: {
+  dark: boolean; onCredential: (credential: string) => void; onError: (message: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const handlersRef = useRef({ onCredential, onError });
+
+  useEffect(() => {
+    handlersRef.current = { onCredential, onError };
+  });
+
+  useEffect(() => {
+    let active = true;
+    loadGoogleIdentity()
+      .then(api => {
+        if (!active || !containerRef.current) return;
+        api.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: response => handlersRef.current.onCredential(response.credential)
+        });
+        api.renderButton(containerRef.current, {
+          type: "standard", theme: dark ? "filled_black" : "outline", size: "large",
+          text: "continue_with", shape: "rectangular", locale: "tr", width: 280
+        });
+      })
+      .catch((err: Error) => {
+        if (active) handlersRef.current.onError(err.message);
+      });
+    return () => { active = false; };
+  }, [dark]);
+
+  return <div ref={containerRef} style={{ display:"flex", justifyContent:"center", minHeight:44 }} />;
+}
+
 function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: string) => void, dark: boolean }) {
   const c = C(dark);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
@@ -818,9 +881,6 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   const [error, setError] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showGoogleModal, setShowGoogleModal] = useState(false);
-  const [googleEmail, setGoogleEmail] = useState("");
-  const [googleName, setGoogleName] = useState("");
   const [showLegal, setShowLegal] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -889,7 +949,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
     }
   };
 
-  // Aynı cihazda her zaman aynı Misafir hesabına bağlanır (Veritabanı + LocalStorage yedekli)
+  // Aynı cihazda her zaman aynı Misafir hesabına bağlanır
   const handleGuestLogin = async () => {
     setError("");
     setLoading(true);
@@ -906,40 +966,28 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         onLogin(data.username, data.token);
         return;
       }
+      setError((await res.text()) || "Misafir girişi başarısız");
     } catch {
-      // Sunucu kapalıysa yerel kalıcı misafir kimliğini kullan
+      setError("Sunucuya ulaşılamadı. Bağlantını kontrol edip tekrar dene.");
     } finally {
       setLoading(false);
     }
-    let savedGuestName = localStorage.getItem("yatzy_guest_name");
-    if (!savedGuestName) {
-      savedGuestName = "Misafir_" + Math.floor(1000 + Math.random() * 9000);
-      localStorage.setItem("yatzy_guest_name", savedGuestName);
-    }
-    onLogin(savedGuestName, "guest_token_" + deviceId);
   };
 
-  const handleGoogleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!googleEmail.trim()) return;
+  const handleGoogleCredential = async (credential: string) => {
     setError("");
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: googleEmail.trim(),
-          name: googleName.trim() || googleEmail.split("@")[0],
-          googleId: "gid_" + googleEmail.trim().toLowerCase()
-        })
+        body: JSON.stringify({ credential })
       });
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(txt || "Google girişi başarısız");
       }
       const data = await res.json();
-      setShowGoogleModal(false);
       onLogin(data.username, data.token);
     } catch (err: any) {
       setError(err.message);
@@ -1029,24 +1077,9 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
 
         {(authMode === "login" || authMode === "register") && (
           <>
-            <button
-              type="button"
-              onClick={() => { setShowGoogleModal(true); setError(""); }}
-              style={{
-                padding:"13px", borderRadius:12, background: dark ? "#fff" : "#1f232b",
-                color: dark ? "#1f232b" : "#fff", border:`1px solid ${c.border}`,
-                fontWeight:800, fontSize:13, cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center", gap:10
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 48 48">
-                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-              </svg>
-              Google ile Devam Et
-            </button>
+            {GOOGLE_CLIENT_ID && (
+              <GoogleSignInButton dark={dark} onCredential={handleGoogleCredential} onError={setError} />
+            )}
 
             <button type="button" onClick={handleGuestLogin} style={{ padding:"13px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:13, cursor:"pointer" }}>
               🎲 Misafir Olarak Devam Et (Cihazda Kalıcı)
@@ -1074,37 +1107,6 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         </button>
       </div>
       <LegalModal open={showLegal} onClose={() => setShowLegal(false)} dark={dark} />
-
-      {/* Google Hızlı Giriş Modalı */}
-      <AnimatePresence>
-        {showGoogleModal && (
-          <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(6px)" }}>
-            <motion.form onSubmit={handleGoogleSubmit} initial={{ scale:0.9, y:20 }} animate={{ scale:1, y:0 }} exit={{ scale:0.9, y:20 }} style={{ background:c.panel, borderRadius:24, width:"100%", maxWidth:340, padding:24, display:"flex", flexDirection:"column", gap:14, border:`1px solid ${c.border}`, boxShadow:`0 20px 50px ${c.shadow}` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:20 }}>🌐</span>
-                  <h3 style={{ margin:0, fontSize:17, fontWeight:800, color:c.text }}>Google Hesabıyla Giriş</h3>
-                </div>
-                <button type="button" onClick={() => setShowGoogleModal(false)} style={{ background:"none", border:"none", color:c.textSub, cursor:"pointer" }}><X size={18}/></button>
-              </div>
-              <p style={{ fontSize:12, color:c.textSub, margin:0, lineHeight:1.4 }}>
-                Google e-posta adresinizi girerek tek tıkla yeni hesap oluşturabilir veya mevcut Google hesabınıza bağlanabilirsiniz.
-              </p>
-              <div>
-                <label style={{ fontSize:11, fontWeight:700, color:c.textSub, marginBottom:4, display:"block" }}>Google E-posta Adresi</label>
-                <input type="email" required value={googleEmail} onChange={e => setGoogleEmail(e.target.value)} placeholder="adiniz@gmail.com" style={{ width:"100%", boxSizing:"border-box", padding:"12px 14px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none" }} />
-              </div>
-              <div>
-                <label style={{ fontSize:11, fontWeight:700, color:c.textSub, marginBottom:4, display:"block" }}>Görünen Ad (İsteğe Bağlı)</label>
-                <input type="text" value={googleName} onChange={e => setGoogleName(e.target.value)} placeholder="Örn: Utku" style={{ width:"100%", boxSizing:"border-box", padding:"12px 14px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none" }} />
-              </div>
-              <button type="submit" disabled={loading} style={{ padding:"14px", borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", fontWeight:800, fontSize:14, cursor:"pointer", marginTop:4 }}>
-                Google ile Bağlan
-              </button>
-            </motion.form>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
@@ -3907,6 +3909,7 @@ function FriendsScreen({
 
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem("yatzy_jwt_token"));
+  const cancelledSocketRef = useRef<WebSocket | null>(null);
   const savedUsername = localStorage.getItem("yatzy_username") || "Oyuncu 1";
   const [screen, setScreen] = useState<Screen>(localStorage.getItem("yatzy_jwt_token") ? "home" : "auth");
 
@@ -4046,95 +4049,107 @@ export default function App() {
     setScreen("home"); 
   };
 
-  const handleLogout = () => {
-    if (ws) ws.close();
+  const clearSession = useCallback(() => {
     localStorage.removeItem("yatzy_jwt_token");
     localStorage.removeItem("yatzy_username");
     setToken(null);
     setProfileLoaded(false);
     setScreen("auth");
+  }, []);
+
+  const handleLogout = () => {
+    if (ws) ws.close();
+    clearSession();
   };
 
   // OYUNA GİRİŞ YAPILDIĞINDA: Veritabanından güncel profil ve zar koleksiyonunu çek
   useEffect(() => {
     if (!token) return;
-    if (!token.startsWith("guest_token_")) {
-      fetch(`${API_BASE}/profile`, {
-        headers: { "Authorization": "Bearer " + token }
-      })
-      .then(res => {
-        if (!res.ok) throw new Error("Profil çekilemedi");
-        return res.json();
-      })
-      .then(data => {
-        const uname = data.username || localStorage.getItem("yatzy_username") || "Oyuncu";
-        localStorage.setItem("yatzy_username", uname);
-        setProfile({
-          name: uname,
-          seed: uname.substring(0, 2).toUpperCase(),
-          avatar: data.avatar || "",
-          country: data.country || "TR",
-          xp: data.xp,
-          level: computeLevel(data.xp),
-          tokens: data.tokens,
-          cases: data.cases,
-          unlockedDice: (data.unlockedDice && data.unlockedDice.length > 0 ? data.unlockedDice : ["ivory"]) as DieMat[],
-          loginStreak: data.loginStreak || 0,
-          lastDailyReward: data.lastDailyReward || "",
-          upperBonusesWon: data.upperBonusesWon || 0,
-          totalYachts: data.totalYachts || 0,
-          maxYachtsInMatch: data.maxYachtsInMatch || 0,
-          claimedQuests: data.claimedQuests || [],
-          stats: {
-            wins: data.wins,
-            gamesPlayed: data.gamesPlayed,
-            highScore: data.highScore
-          }
-        });
-        if (data.selectedDice) {
-          setDieMat(data.selectedDice as DieMat);
+    // Eski sürümlerin yerel misafir kimliği sunucuda geçersizdir
+    if (token.startsWith("guest_token_")) {
+      clearSession();
+      return;
+    }
+    fetch(`${API_BASE}/profile`, {
+      headers: { "Authorization": "Bearer " + token }
+    })
+    .then(res => {
+      if (res.status === 401 || res.status === 404) {
+        emitToast("Oturumunun süresi doldu. Lütfen tekrar giriş yap.");
+        clearSession();
+        return null;
+      }
+      if (!res.ok) throw new Error("Profil çekilemedi");
+      return res.json();
+    })
+    .then(data => {
+      if (!data) return;
+      const uname = data.username || localStorage.getItem("yatzy_username") || "Oyuncu";
+      localStorage.setItem("yatzy_username", uname);
+      setProfile({
+        name: uname,
+        seed: uname.substring(0, 2).toUpperCase(),
+        avatar: data.avatar || "",
+        country: data.country || "TR",
+        xp: data.xp,
+        level: computeLevel(data.xp),
+        tokens: data.tokens,
+        cases: data.cases,
+        unlockedDice: (data.unlockedDice && data.unlockedDice.length > 0 ? data.unlockedDice : ["ivory"]) as DieMat[],
+        loginStreak: data.loginStreak || 0,
+        lastDailyReward: data.lastDailyReward || "",
+        upperBonusesWon: data.upperBonusesWon || 0,
+        totalYachts: data.totalYachts || 0,
+        maxYachtsInMatch: data.maxYachtsInMatch || 0,
+        claimedQuests: data.claimedQuests || [],
+        stats: {
+          wins: data.wins,
+          gamesPlayed: data.gamesPlayed,
+          highScore: data.highScore
         }
-        setProfileLoaded(true);
-      })
-      .catch(err => {
-        console.error("Veritabanı okuma hatası:", err);
-        setProfileLoaded(true);
       });
-    } else {
-      const savedGuest = localStorage.getItem("yatzy_guest_saved_profile");
-      if (savedGuest) {
-        try {
-          const parsed = JSON.parse(savedGuest);
-          setProfile(prev => ({ ...prev, ...parsed }));
-        } catch {}
-      } else {
-        setProfile(prev => ({ ...prev, lastDailyReward: "" }));
+      if (data.selectedDice) {
+        setDieMat(data.selectedDice as DieMat);
       }
       setProfileLoaded(true);
-    }
-  }, [token]);
+    })
+    .catch(err => {
+      console.error("Veritabanı okuma hatası:", err);
+      setProfileLoaded(true);
+    });
+  }, [token, clearSession]);
 
-  // Çevrimdışı misafir profilini de cihazda kalıcı olarak sakla
-  useEffect(() => {
-    if (profileLoaded && token && token.startsWith("guest_token_")) {
-      localStorage.setItem("yatzy_guest_saved_profile", JSON.stringify(profile));
-      localStorage.setItem("yatzy_guest_name", profile.name);
+  // Bağlantı reddedildiyse oturumun geçerliliğini kontrol eder (WebSocket HTTP durumunu göstermez)
+  const handleSocketRejected = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/profile`, {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      if (res.status === 401 || res.status === 404) {
+        emitToast("Oturumunun süresi doldu. Lütfen tekrar giriş yap.");
+        handleLogout();
+        return;
+      }
+    } catch {
+      // Aşağıdaki genel bağlantı uyarısı gösterilir
     }
-  }, [profile, profileLoaded, token]);
+    emitToast("Sunucuya bağlanılamadı. Lütfen tekrar dene.");
+  };
 
   const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number) => {
-    if (isSearching) return;
+    if (isSearching || !token) return;
     const effectiveBet: BetOption = profile.tokens >= betAmount ? betAmount : 0;
     if (ws) {
       ws.close();
     }
     setIsSearching(true);
     
-    const wsUrl = token ? `${WS_BASE}/play?token=${encodeURIComponent(token)}` : `${WS_BASE}/play`;
-    const socket = new WebSocket(wsUrl);
+    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(token)}`);
+    let opened = false;
     
     socket.onopen = () => {
-      socket.send(JSON.stringify({ action: action, roomCode: roomCode, username: profile.name, betAmount: effectiveBet }));
+      opened = true;
+      socket.send(JSON.stringify({ action: action, roomCode: roomCode, betAmount: effectiveBet }));
     };
 
     socket.onmessage = (event) => {
@@ -4174,6 +4189,9 @@ export default function App() {
     socket.onclose = () => {
       setIsSearching(false);
       setCreatedRoomCode(null);
+      if (!opened && cancelledSocketRef.current !== socket) {
+        handleSocketRejected();
+      }
     };
 
     setWs(socket);
@@ -4181,6 +4199,7 @@ export default function App() {
 
   const cancelMatchmaking = () => {
     if (ws) {
+      cancelledSocketRef.current = ws;
       ws.close();
     }
     setIsSearching(false);
