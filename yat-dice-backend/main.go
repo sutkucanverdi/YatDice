@@ -89,6 +89,20 @@ type Client struct {
 	LastChatAt  time.Time
 }
 
+var profanityList = []string{
+	"aptal", "salak", "gerizekalı", "küfür", "amk", "aq", "sik", "orospu", "piç", "yavşak", "göt", "ibne", "fuck", "shit", "bitch", "asshole", "dick", "cunt",
+}
+
+func containsProfanity(s string) bool {
+	lower := strings.ToLower(s)
+	for _, bw := range profanityList {
+		if strings.Contains(lower, bw) {
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizeChatMessage(raw string) string {
 	s := strings.TrimSpace(raw)
 	s = strings.ReplaceAll(s, "<", "")
@@ -97,13 +111,8 @@ func sanitizeChatMessage(raw string) string {
 	if len(runes) > 120 {
 		s = string(runes[:120])
 	}
-	badWords := []string{"aptal", "salak", "gerizekalı", "küfür"}
-	lower := strings.ToLower(s)
-	for _, bw := range badWords {
-		if strings.Contains(lower, bw) {
-			s = "***"
-			break
-		}
+	if containsProfanity(s) {
+		return "*** (Topluluk Kuralları gereği gizlendi)"
 	}
 	return s
 }
@@ -1319,6 +1328,20 @@ func createTables() {
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS total_yachts INT DEFAULT 0;`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS max_yachts_in_match INT DEFAULT 0;`,
 		`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS claimed_quests TEXT DEFAULT '';`,
+		`CREATE TABLE IF NOT EXISTS user_reports (
+			id SERIAL PRIMARY KEY,
+			reporter_id INT DEFAULT 0,
+			reported_username VARCHAR(60) NOT NULL,
+			reason VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_blocks (
+			id SERIAL PRIMARY KEY,
+			blocker_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			blocked_username VARCHAR(60) NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(blocker_id, blocked_username)
+		);`,
 	}
 	for _, m := range migrations {
 		_, _ = db.Exec(m)
@@ -1330,7 +1353,7 @@ func createTables() {
 func setupCORS(w *http.ResponseWriter, r *http.Request) bool {
 	allowedOrigin := getEnv("ALLOWED_ORIGIN", "*")
 	(*w).Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	if r.Method == "OPTIONS" {
 		(*w).WriteHeader(http.StatusOK)
@@ -1357,6 +1380,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	creds.Email = strings.ToLower(strings.TrimSpace(creds.Email))
 	if len(creds.Username) < 2 || len(creds.Username) > 30 || len(creds.Password) < 6 {
 		http.Error(w, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
+		return
+	}
+	if containsProfanity(creds.Username) {
+		http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
 		return
 	}
 
@@ -2071,6 +2098,7 @@ func main() {
 	http.HandleFunc("/auth/reset-password", handleResetPassword)
 	http.HandleFunc("/profile", handleGetProfile)
 	http.HandleFunc("/profile/update", handleUpdateProfile)
+	http.HandleFunc("/profile/delete", handleDeleteAccount)
 	http.HandleFunc("/profile/claim-daily", handleClaimDaily)
 	http.HandleFunc("/profile/open-case", handleOpenCase)
 	http.HandleFunc("/quests/claim", handleClaimQuest)
@@ -2079,6 +2107,10 @@ func main() {
 	http.HandleFunc("/friends/request", handleFriendRequest)
 	http.HandleFunc("/friends/respond", handleFriendRespond)
 	http.HandleFunc("/friends/invite", handleFriendInvite)
+	http.HandleFunc("/ugc/report", handleReportUser)
+	http.HandleFunc("/ugc/block", handleBlockUser)
+	http.HandleFunc("/privacy", handlePrivacyHTML)
+	http.HandleFunc("/terms", handleTermsHTML)
 	http.HandleFunc("/leaderboard", handleLeaderboard)
 	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/play", handleConnections)
@@ -2813,4 +2845,157 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"db":     dbStatus,
 		"time":   time.Now().Format(time.RFC3339),
 	})
+}
+
+// ─── 8. APP STORE & GOOGLE PLAY STORE UYUMLULUK UÇ NOKTALARI ──────────────────
+// (Apple Guideline 5.1.1(v) Hesap Silme, Guideline 1.2 UGC Raporlama/Engelleme, Gizlilik & EULA)
+
+// POST veya DELETE /profile/delete : Kullanıcının hesabını ve tüm ilişkili verilerini kalıcı olarak siler
+func handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, true) {
+		return
+	}
+
+	uidStr, err := getUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "Yetkisiz işlem", http.StatusUnauthorized)
+		return
+	}
+	uid, _ := strconv.Atoi(uidStr)
+	if uid <= 0 {
+		http.Error(w, "Geçersiz kullanıcı", http.StatusBadRequest)
+		return
+	}
+
+	// Bekleyen davetleri ve çevrimiçi durumu temizle
+	mu.Lock()
+	delete(pendingInvites, uid)
+	mu.Unlock()
+
+	presenceMu.Lock()
+	delete(userLastSeen, uid)
+	delete(userInGame, uid)
+	presenceMu.Unlock()
+
+	// ON DELETE CASCADE ile profiles, friendships ve user_blocks otomatik silinir
+	_, _ = db.Exec(`DELETE FROM profiles WHERE user_id = $1`, uid)
+	_, _ = db.Exec(`DELETE FROM friendships WHERE requester_id = $1 OR addressee_id = $1`, uid)
+	_, _ = db.Exec(`DELETE FROM user_blocks WHERE blocker_id = $1`, uid)
+	res, err := db.Exec(`DELETE FROM users WHERE id = $1`, uid)
+	if err != nil {
+		http.Error(w, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
+		return
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		http.Error(w, "Hesap bulunamadı", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"message": "Hesabınız ve tüm kişisel verileriniz kalıcı olarak silindi.",
+	})
+}
+
+// POST /ugc/report : Uygunsuz oyuncu/mesaj bildirimi (Apple Guideline 1.2 & Google Play UGC)
+func handleReportUser(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, true) {
+		return
+	}
+
+	reporterID := 0
+	if uidStr, err := getUserIDFromToken(r); err == nil {
+		reporterID, _ = strconv.Atoi(uidStr)
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		return
+	}
+	target := strings.TrimSpace(req.Username)
+	reason := strings.TrimSpace(req.Reason)
+	if target == "" || reason == "" {
+		http.Error(w, "Kullanıcı adı ve bildirim nedeni zorunludur", http.StatusBadRequest)
+		return
+	}
+	if len(reason) > 250 {
+		reason = reason[:250]
+	}
+
+	_, _ = db.Exec(`
+		INSERT INTO user_reports (reporter_id, reported_username, reason)
+		VALUES ($1, $2, $3)
+	`, reporterID, target, reason)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"message": "Bildiriminiz güvenlik ekibimize iletildi. 24 saat içinde incelenecektir.",
+	})
+}
+
+// POST /ugc/block : Oyuncu engelleme (Apple Guideline 1.2 & Google Play UGC)
+func handleBlockUser(w http.ResponseWriter, r *http.Request) {
+	if setupCORS(&w, r) {
+		return
+	}
+	if !applySecurityAndRateLimit(w, r, false) {
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		return
+	}
+	target := strings.TrimSpace(req.Username)
+	if target == "" {
+		http.Error(w, "Engellenecek kullanıcı adı gerekli", http.StatusBadRequest)
+		return
+	}
+
+	if uidStr, err := getUserIDFromToken(r); err == nil {
+		uid, _ := strconv.Atoi(uidStr)
+		if uid > 0 {
+			_, _ = db.Exec(`
+				INSERT INTO user_blocks (blocker_id, blocked_username)
+				VALUES ($1, $2)
+				ON CONFLICT (blocker_id, blocked_username) DO NOTHING
+			`, uid, target)
+			// Varsa arkadaşlık bağını da kaldır
+			_, _ = db.Exec(`
+				DELETE FROM friendships
+				WHERE (requester_id = $1 AND addressee_id IN (SELECT id FROM users WHERE LOWER(username) = LOWER($2)))
+				   OR (addressee_id = $1 AND requester_id IN (SELECT id FROM users WHERE LOWER(username) = LOWER($2)))
+			`, uid, target)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"message": target + " engellendi. Bu oyuncunun mesajlarını ve davetlerini artık görmeyeceksiniz.",
+	})
+}
+
+// GET /privacy : App Store Connect & Google Play Console için resmi Gizlilik Politikası web sayfası
+func handlePrivacyHTML(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — Gizlilik Politikası (Privacy Policy)</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4AADA6}a{color:#c9a84c}</style></head><body><h1>Yat Dice — Gizlilik Politikası (Privacy Policy)</h1><p><strong>Son Güncelleme:</strong> Kasım 2026</p><h2>1. Toplanan Veriler</h2><p>Yat Dice, yalnızca oyun deneyimini sağlamak amacıyla kullanıcı adı, isteğe bağlı e-posta adresi (şifre sıfırlama ve Google ile giriş için), ülke bayrağı tercihi, profil avatarı ve oyun içi istatistikleri (XP, sanal jeton, galibiyet sayısı) saklar. Üçüncü taraf reklam takipçileri (IDFA/GAID) kullanılmaz ve kişisel verileriniz hiçbir üçüncü tarafla satılmaz veya paylaşılmaz.</p><h2>2. Sanal Öğeler ve Kumar Yasağı Beyanı</h2><p>Oyun içindeki tüm Jetonlar (🪙) ve Kasalar (📦) tamamen eğlence amaçlı sanal oyun içi puandır. Gerçek parayla satın alınamaz, gerçek paraya, mala veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</p><h2>3. Kullanıcı Tarafından Oluşturulan İçerik (UGC) ve Güvenlik</h2><p>Oyun içi sohbet otomatik küfür filtresiyle korunmaktadır. Kullanıcılar uygunsuz davranışları oyun içindeki <strong>Raporla (Report)</strong> ve <strong>Engelle (Block)</strong> butonlarıyla anında bildirebilir ve engelleyebilir.</p><h2>4. Hesap ve Veri Silme (Account Deletion)</h2><p>Kullanıcılar diledikleri zaman uygulama içerisindeki <strong>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</strong> butonuna tıklayarak hesaplarını ve ilişkili tüm verilerini sunucularımızdan anında ve geri döndürülemez biçimde silebilirler.</p></body></html>`))
+}
+
+// GET /terms : App Store Connect & Google Play Console için Kullanım Koşulları (EULA) web sayfası
+func handleTermsHTML(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — Kullanım Koşulları (Terms of Use / EULA)</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4AADA6}</style></head><body><h1>Yat Dice — Kullanım Koşulları (EULA) ve Topluluk Kuralları</h1><p><strong>Son Güncelleme:</strong> Kasım 2026</p><h2>1. Sıfır Toleranslı Topluluk Kuralları (UGC Policy)</h2><p>Yat Dice, tüm oyuncular için güvenli ve saygılı bir ortam sunar. Hakaret, küfür, nefret söylemi, taciz veya hile girişimlerine karşı sıfır tolerans politikası uygulanır. Bildirilen içerikler 24 saat içinde incelenir ve ihlal yapan hesaplar kalıcı olarak kapatılır.</p><h2>2. Sanal Jetonlar ve Kasa Olasılıkları (Loot Box Disclosure)</h2><p>Oyun içi Jetonlar (🪙) ve Kasalar (📦) gerçek para değeri taşımaz. Açılan her Kasa (📦), %100 olasılıkla 50 ile 199 arasında eşit dağılımlı (Uniform Distribution: 50–99 Jeton %33.3, 100–149 Jeton %33.3, 150–199 Jeton %33.4) sanal oyun içi jeton kazandırır.</p></body></html>`))
 }

@@ -483,7 +483,7 @@ const MAT: Record<DieMat, {
   ruby: {
     face: "linear-gradient(145deg, #e74c3c 0%, #b02318 48%, #6e0f09 100%)",
     edge: "rgba(255,140,140,0.35)", dot: "#fff5f5", spec: "rgba(255,190,190,0.5)",
-    lockColor: "#f5c842", name: "Kızıl Yakut", desc: "Parlak yakut kristali. Yüksek bahis masalarının favorisi.",
+    lockColor: "#f5c842", name: "Kızıl Yakut", desc: "Parlak yakut kristali. Ustalar arenasının favorisi.",
   },
   gold: {
     face: "linear-gradient(145deg, #ffe680 0%, #d4af37 45%, #997312 100%)",
@@ -678,6 +678,53 @@ function getOrCreateDeviceId(): string {
   return devId;
 }
 
+function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => void; dark: boolean }) {
+  const c = C(dark);
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          onClick={onClose}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 260, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, backdropFilter: "blur(6px)" }}
+        >
+          <motion.div
+            initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+            onClick={e => e.stopPropagation()}
+            style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 365, maxHeight: "84vh", display: "flex", flexDirection: "column", border: `1px solid ${c.borderMid}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }}
+          >
+            <div style={{ padding: "15px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
+              <h3 style={{ color: c.text, fontSize: 15, fontWeight: 800, margin: 0 }}>📜 Gizlilik Politikası, EULA & Yasal Beyan</h3>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, fontSize: 11.5, color: c.textSub, lineHeight: 1.55 }}>
+              <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>⚖️ Sanal Jeton & Kumar Yasağı Beyanı (No Gambling)</p>
+                Yat Dice tamamen beceri ve stratejiye dayalı eğlence amaçlı bir oyundur. Oyun içindeki tüm <b>Jetonlar (🪙)</b> ve <b>Kasalar (📦)</b> yalnızca sanal oyun içi puandır; <b>gerçek parayla satın alınamaz, gerçek paraya, kripto varlığa veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</b>
+              </div>
+              <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>📦 Kasa (Loot Box) Olasılık Bildirimi</p>
+                Açılan her Kasa (📦) %100 olasılıkla <b>50 ile 199 arasında sanal jeton</b> kazandırır. Olasılık dağılımı tamamen eşittir (Uniform):<br />
+                • <b>50 – 99 🪙 Sanal Jeton:</b> %33.3<br />
+                • <b>100 – 149 🪙 Sanal Jeton:</b> %33.3<br />
+                • <b>150 – 199 🪙 Sanal Jeton:</b> %33.4
+              </div>
+              <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🛡️ Topluluk Kuralları (UGC) & Sıfır Tolerans</p>
+                Oyun içi sohbette küfür, hakaret, taciz ve nefret söylemine karşı <b>sıfır tolerans</b> uygulanır. Uygunsuz mesajlar otomatik filtrelenir; oyuncular maç esnasında rakiplerini anında <b>Susturup / Engelleyebilir (Block)</b> veya <b>Şikayet Edebilir (Report)</b>.
+              </div>
+              <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)</p>
+                Yalnızca kullanıcı adınız, isteğe bağlı e-postanız ve oyun istatistikleriniz saklanır; verileriniz üçüncü taraflarla paylaşılmaz ve reklam takipçisi (IDFA) kullanılmaz. Dilediğiniz zaman <b>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</b> menüsünden hesabınızı ve tüm verilerinizi anında silebilirsiniz.
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: string) => void, dark: boolean }) {
   const c = C(dark);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
@@ -692,6 +739,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   const [showGoogleModal, setShowGoogleModal] = useState(false);
   const [googleEmail, setGoogleEmail] = useState("");
   const [googleName, setGoogleName] = useState("");
+  const [showLegal, setShowLegal] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -925,17 +973,25 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         )}
       </form>
 
-      <div style={{ textAlign:"center", marginTop:18 }}>
+      <div style={{ textAlign:"center", marginTop:14, display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
         {authMode === "login" ? (
-          <button type="button" onClick={() => { setAuthMode("register"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:8 }}>
+          <button type="button" onClick={() => { setAuthMode("register"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:4 }}>
             Hesabın yok mu? <span style={{ color:c.accent, fontWeight:800 }}>Kayıt Ol</span>
           </button>
         ) : (
-          <button type="button" onClick={() => { setAuthMode("login"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:8 }}>
+          <button type="button" onClick={() => { setAuthMode("login"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:4 }}>
             Giriş ekranına dön → <span style={{ color:c.accent, fontWeight:800 }}>Giriş Yap</span>
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setShowLegal(true)}
+          style={{ background: "none", border: "none", color: c.textFaint, fontSize: 10.5, cursor: "pointer", textDecoration: "underline", padding: 2 }}
+        >
+          📜 Gizlilik Politikası, Kullanım Koşulları (EULA) ve Yasal Beyan
+        </button>
       </div>
+      <LegalModal open={showLegal} onClose={() => setShowLegal(false)} dark={dark} />
 
       {/* Google Hızlı Giriş Modalı */}
       <AnimatePresence>
@@ -997,6 +1053,41 @@ function HomeScreen({
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loadingLb, setLoadingLb] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showLegalModal, setShowLegalModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  const handleDeleteMyAccount = async () => {
+    if (deletingAccount) return;
+    setDeletingAccount(true);
+    try {
+      if (token && !token.startsWith("guest_token_")) {
+        const res = await fetch(`${API_BASE}/profile/delete`, {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + token }
+        });
+        if (!res.ok) {
+          const msg = await res.text();
+          emitToast(msg || "Hesap silinemedi");
+          setDeletingAccount(false);
+          return;
+        }
+      }
+      localStorage.removeItem("yatzy_jwt_token");
+      localStorage.removeItem("yatzy_username");
+      localStorage.removeItem("yatzy_guest_saved_profile");
+      localStorage.removeItem("yatzy_guest_name");
+      localStorage.removeItem("yatzy_device_id");
+      setIsEditing(false);
+      setShowDeleteConfirm(false);
+      emitToast("Hesabınız ve tüm verileriniz kalıcı olarak silindi.");
+      onLogout();
+    } catch (_) {
+      emitToast("Sunucuya ulaşılamadı.");
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
 
   const toggleSound = () => {
     const next = !soundOn;
@@ -1248,10 +1339,10 @@ function HomeScreen({
         </div>
       </div>
 
-      {/* KASA AÇ BUTONU */}
-      <div style={{ padding:"0 20px 18px", display:"flex" }}>
+      {/* KASA AÇ BUTONU + OLASILIK BİLDİRİMİ (Apple Guideline 3.1.1 Uyumlu) */}
+      <div style={{ padding:"0 20px 14px", display:"flex", flexDirection:"column", gap:5 }}>
         <motion.button whileTap={profile.cases>0 ? {scale:0.96} : {}} onClick={openCase} style={{
-          flex:1, padding:"16px", background: profile.cases>0 ? c.goldBg : c.panelAlt, 
+          width:"100%", padding:"15px", background: profile.cases>0 ? c.goldBg : c.panelAlt, 
           border:`1px solid ${profile.cases>0 ? c.gold : c.border}`, borderRadius:14, cursor: profile.cases>0 ? "pointer" : "not-allowed",
           display:"flex", alignItems:"center", justifyContent:"center", gap:10
         }}>
@@ -1260,17 +1351,20 @@ function HomeScreen({
              {profile.cases > 0 ? `${profile.cases} Kasa Açılmayı Bekliyor` : "Kasa Yok"}
            </span>
         </motion.button>
+        <span style={{ fontSize:9.5, color:c.textFaint, textAlign:"center" }}>
+          📦 Kasa Olasılığı: %100 Sanal Jeton (50–99 🪙 %33.3 • 100–149 🪙 %33.3 • 150–199 🪙 %33.4)
+        </span>
       </div>
 
-      {/* BAHİS / MASA GİRİŞ ÜCRETİ SEÇİCİ */}
+      {/* MASA GİRİŞ JETONU SEÇİCİ (Mağaza Politikalarına Uygun Sanal Turnuva Girişi) */}
       <div style={{ padding:"0 20px 14px" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
             <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
-              💰 Masa Bahsi (Giriş)
+              🏆 Masa Giriş Jetonu (Sanal)
             </span>
             <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
-              {betAmount === 0 ? "Ücretsiz Dostluk Maçı" : `Kazanan Alır: +${betAmount * 2} 🪙`}
+              {betAmount === 0 ? "Ücretsiz Dostluk Maçı" : `Ödül Havuzu: +${betAmount * 2} 🪙`}
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
@@ -1716,13 +1810,42 @@ function HomeScreen({
                 </div>
 
                 <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:14 }}>Değişiklikleri Kaydet</button>
-                <button onClick={onLogout} style={{ width:"100%", padding:13, borderRadius:12, background:"rgba(255, 71, 87, 0.1)", color:"#ff4757", border:`1px solid rgba(255, 71, 87, 0.3)`, cursor:"pointer", fontWeight:700, fontSize:14 }}>
+                <button type="button" onClick={() => setShowLegalModal(true)} style={{ width:"100%", padding:11, borderRadius:12, background:c.panelAlt, color:c.textSub, border:`1px solid ${c.border}`, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+                   📜 Gizlilik Politikası, EULA & Kasa Olasılıkları
+                </button>
+                <button onClick={onLogout} style={{ width:"100%", padding:12, borderRadius:12, background:"rgba(255, 71, 87, 0.1)", color:"#ff4757", border:`1px solid rgba(255, 71, 87, 0.3)`, cursor:"pointer", fontWeight:700, fontSize:13 }}>
                    Çıkış Yap
                 </button>
+
+                {/* Apple Guideline 5.1.1(v) & Google Play Zorunlu Hesap Silme Bölümü */}
+                {!showDeleteConfirm ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    style={{ width:"100%", padding:10, borderRadius:10, background:"transparent", color:c.textFaint, border:`1px dashed ${c.border}`, cursor:"pointer", fontWeight:600, fontSize:11 }}
+                  >
+                    🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil
+                  </button>
+                ) : (
+                  <div style={{ background:"rgba(192,57,43,0.12)", border:`1px solid ${c.danger}`, borderRadius:12, padding:12, display:"flex", flexDirection:"column", gap:8 }}>
+                    <p style={{ fontSize:11, color:c.text, fontWeight:700, margin:0, lineHeight:1.4 }}>
+                      ⚠️ Hesabınız, tüm istatistikleriniz, arkadaşlarınız ve koleksiyonunuz sunucudan <b>kalıcı olarak silinecektir</b>. Onaylıyor musunuz?
+                    </p>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button type="button" onClick={() => setShowDeleteConfirm(false)} style={{ flex:1, padding:"9px", borderRadius:8, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                        Vazgeç
+                      </button>
+                      <button type="button" disabled={deletingAccount} onClick={handleDeleteMyAccount} style={{ flex:1, padding:"9px", borderRadius:8, background:c.danger, color:"#fff", border:"none", fontSize:11, fontWeight:800, cursor:"pointer" }}>
+                        {deletingAccount ? "Siliniyor..." : "Evet, Kalıcı Sil"}
+                      </button>
+                    </div>
+                  </div>
+                )}
              </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+      <LegalModal open={showLegalModal} onClose={() => setShowLegalModal(false)} dark={dark} />
     </div>
   );
 }
@@ -2078,7 +2201,7 @@ function GameScreen({
   const [turnTimeLeft, setTurnTimeLeft] = useState(30);
   const [floatingEmoji, setFloatingEmoji] = useState<{emoji:string; fromMe:boolean; id:number}|null>(null);
 
-  // Canlı Sohbet & Anti-Spam State'leri
+  // Canlı Sohbet & Anti-Spam + UGC Engelleme/Raporlama State'leri (Apple Guideline 1.2)
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ sender: string; senderName: string; text: string; time: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -2087,7 +2210,50 @@ function GameScreen({
   const [emojiCooldown, setEmojiCooldown] = useState(false);
   const [chatCooldown, setChatCooldown] = useState(false);
   const [spamWarn, setSpamWarn] = useState<string | null>(null);
+  const [opponentMuted, setOpponentMuted] = useState(false);
+  const opponentMutedRef = React.useRef(false);
   const chatOpenRef = React.useRef(false);
+
+  const toggleMuteBlockOpponent = async () => {
+    const next = !opponentMuted;
+    setOpponentMuted(next);
+    opponentMutedRef.current = next;
+    if (next) {
+      setChatPreview(null);
+      emitToast(`${opponentName || "Rakip"} susturuldu ve engellendi.`);
+      try {
+        await fetch(`${API_BASE}/ugc/block`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "")
+          },
+          body: JSON.stringify({ username: opponentName || "Rakip" })
+        });
+      } catch (_) {}
+    } else {
+      emitToast(`${opponentName || "Rakip"} için susturma kaldırıldı.`);
+    }
+  };
+
+  const reportOpponent = async () => {
+    try {
+      await fetch(`${API_BASE}/ugc/report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "")
+        },
+        body: JSON.stringify({
+          username: opponentName || "Rakip",
+          reason: "Oyun içi uygunsuz sohbet / davranış bildirimi"
+        })
+      });
+    } catch (_) {}
+    setOpponentMuted(true);
+    opponentMutedRef.current = true;
+    emitToast("Şikayetiniz güvenlik ekibine iletildi ve oyuncu susturuldu.");
+  };
   useEffect(() => {
     chatOpenRef.current = chatOpen;
     if (chatOpen) {
@@ -2159,11 +2325,13 @@ function GameScreen({
         setLocked(data.locked);
       }
       else if (data.type === "EMOJI") {
+        if (opponentMutedRef.current && data.sender !== myPlayerId) return;
         const id = ++emojiIdRef.current;
         setFloatingEmoji({ emoji: data.emoji, fromMe: data.sender === myPlayerId, id });
         setTimeout(() => setFloatingEmoji(prev => prev?.id === id ? null : prev), 2200);
       }
       else if (data.type === "CHAT") {
+        if (opponentMutedRef.current && data.sender !== myPlayerId) return;
         const newMsg = {
           sender: data.sender || "p2",
           senderName: data.senderName || "Oyuncu",
@@ -2720,11 +2888,36 @@ function GameScreen({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${c.border}`, paddingBottom: 10 }}>
                 <div>
                   <h3 style={{ fontSize: 15, fontWeight: 800, color: c.text, margin: 0 }}>💬 Maç Sohbeti</h3>
-                  <span style={{ fontSize: 10, color: c.textSub }}>Spam koruması aktif (2.5sn bekleme süresi)</span>
+                  <span style={{ fontSize: 10, color: c.textSub }}>Küfür ve spam koruması aktif</span>
                 </div>
-                <button onClick={() => setChatOpen(false)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8, padding: 6, color: c.textSub, cursor: "pointer", display: "flex" }}>
-                  <X size={16} />
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={toggleMuteBlockOpponent}
+                    style={{
+                      background: opponentMuted ? c.danger : c.panelAlt,
+                      color: opponentMuted ? "#fff" : c.textSub,
+                      border: `1px solid ${c.border}`, borderRadius: 8,
+                      padding: "5px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer"
+                    }}
+                  >
+                    {opponentMuted ? "🔇 Engellendi" : "🚫 Sustur"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={reportOpponent}
+                    style={{
+                      background: "rgba(192,57,43,0.12)", color: c.danger,
+                      border: `1px solid ${c.danger}40`, borderRadius: 8,
+                      padding: "5px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer"
+                    }}
+                  >
+                    🚩 Raporla
+                  </button>
+                  <button onClick={() => setChatOpen(false)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8, padding: 6, color: c.textSub, cursor: "pointer", display: "flex" }}>
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               {/* Hızlı Hazır Mesajlar */}
@@ -2856,7 +3049,7 @@ function ResultScreen({
         </motion.div>
         <div style={{ textAlign:"center" }}>
           <h1 style={{ fontSize:24, fontWeight:800, color:isDraw?c.gold:(won?c.accent:c.danger) }}>{isDraw ? "Berabere!" : (won ? "Galibiyet!" : "Mağlubiyet")}</h1>
-          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{isDraw ? "Baş başa mücadele! Bahisler iade edildi." : (won ? "Harika oynandı!" : "Bir dahaki sefere!")}</p>
+          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{isDraw ? "Baş başa mücadele! Giriş jetonları iade edildi." : (won ? "Harika oynandı!" : "Bir dahaki sefere!")}</p>
         </div>
         <div style={{ display:"flex", gap:28, alignItems:"flex-end" }}>
           {[{name:profile.name,seed:profile.seed,score:myTotal,you:true},{name:oppName,seed:oppSeed,score:oppTotal,you:false}].map((p, idx)=>(
@@ -2947,11 +3140,11 @@ function ModeScreen({
       icon: "🎲", available: true, action: "QUICK_MATCH",
     },
     {
-      key: "highroller", label: "Yüksek Bahis Arenası", sub: "250 🪙 Giriş • Kazanan +500 🪙 Alır",
+      key: "highroller", label: "Ustalar Arenası", sub: "250 🪙 Giriş • Kazanan +500 🪙 Sanal Jeton Alır",
       icon: "🔥", available: true, action: "QUICK_MATCH", requiredBet: 250,
     },
     {
-      key: "viproyal", label: "VIP Kraliyet Masası", sub: "500 🪙 Giriş • Kazanan +1.000 🪙 Alır",
+      key: "viproyal", label: "VIP Kraliyet Masası", sub: "500 🪙 Giriş • Kazanan +1.000 🪙 Sanal Jeton Alır",
       icon: "👑", available: true, action: "QUICK_MATCH", requiredBet: 500,
     },
   ];
@@ -2960,7 +3153,7 @@ function ModeScreen({
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:"Inter,sans-serif", display:"flex", flexDirection:"column" }}>
       <div style={{ padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <h2 style={{ fontSize:22, fontWeight:800, color:c.text, marginBottom:4 }}>Mod Seç</h2>
-        <p style={{ fontSize:12, color:c.textSub }}>Bahsini seç ve maça başla</p>
+        <p style={{ fontSize:12, color:c.textSub }}>Masa giriş jetonunu seç ve maça başla</p>
       </div>
 
       {/* Üstte dekoratif dönen 3D zarlar - uygun boşluklarla hizalandı */}
@@ -2970,12 +3163,12 @@ function ModeScreen({
         ))}
       </div>
 
-      {/* Mod Ekranı Bahis Seçici */}
+      {/* Mod Ekranı Masa Giriş Jetonu Seçici */}
       <div style={{ padding:"6px 20px 4px" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
             <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em" }}>
-              💰 Masa Bahsi
+              🏆 Masa Giriş Jetonu (Sanal)
             </span>
             <span style={{ fontSize:11, fontWeight:800, color:c.gold }}>
               {betAmount === 0 ? "Ücretsiz" : `Ödül Havuzu: ${betAmount * 2} 🪙`}
