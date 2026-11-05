@@ -39,12 +39,12 @@
 
 ## 📱 App Store & Google Play Store Uyumluluk (Compliance) Özellikleri
 
-Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Uygulama henüz mağazaya gönderilmeye hazır değildir; yerel Android/iOS projesi, Sign in with Apple, sunucu tarafı engelleme, moderasyon, e-posta ile şifre sıfırlama ve web'den hesap silme sayfası eksiktir:
+Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Uygulama henüz mağazaya gönderilmeye hazır değildir; yerel Android/iOS projesi, mobilde Google girişi ve Sign in with Apple eksiktir:
 
 1. **Uygulama İçi Kalıcı Hesap ve Veri Silme (Apple Guideline 5.1.1(v) & Google Play Data Safety):**
-   - Kullanıcılar **Anasayfa &rarr; Profili Özelleştir &rarr; 🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil** adımıyla hesaplarını, profillerini, arkadaşlıklarını ve tüm verilerini (`POST /profile/delete`) kalıcı olarak silebilir.
+   - Kullanıcılar **Anasayfa &rarr; Profili Özelleştir &rarr; 🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil** adımıyla (`POST /profile/delete`) veya uygulamayı kaldırdıysa `/account/delete` web sayfasından hesabını silebilir.
 2. **Kullanıcı İçeriği (UGC) Güvenliği (Apple Guideline 1.2 & Google Play UGC Policy):**
-   - Kayıt ve sohbette otomatik Türkçe/İngilizce küfür filtresi (`containsProfanity`), canlı maç sohbetinde **🚫 Sustur / Engelle** (`POST /ugc/block`) ve **🚩 Raporla / Şikayet Et** (`POST /ugc/report`) butonları yer alır.
+   - Kayıt ve sohbette otomatik küfür filtresi, sunucu tarafında çalışan engelleme (eşleşme, oda, davet, arkadaşlık ve sohbet), son sohbet kayıtlarıyla şikâyet ve `/admin` moderasyon paneli bulunur. Şikâyetler panelden düzenli olarak incelenmelidir.
 3. **Kasa (`📦 Loot Box`) Olasılık Bildirimi (Apple Guideline 3.1.1):**
    - Kasa açma butonunun altında ve Yasal Beyan ekranında kazanma olasılıkları açıkça belirtilir: `%100 Sanal Jeton (50–99 🪙: %33.3 • 100–149 🪙: %33.3 • 150–199 🪙: %33.4)`.
 4. **Sanal Jeton & Kumar Yasağı Beyanı (Apple Guideline 5.3 & Google Play Gambling Policy):**
@@ -53,6 +53,8 @@ Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Uygulama h
    - Mağaza panellerinde (*App Store Connect* ve *Google Play Console*) doğrudan URL olarak verilebilen canlı uç noktalar:
      - **Privacy Policy URL:** `https://<sunucu-adresiniz>/privacy`
      - **Terms of Use (EULA) URL:** `https://<sunucu-adresiniz>/terms`
+     - **Hesap silme URL'si:** `https://<sunucu-adresiniz>/account/delete`
+   - Bu metinler taslaktır; yayın öncesi `LEGAL_*` değerlerini girin ve bir hukuk uzmanına kontrol ettirin.
 
 ---
 
@@ -142,6 +144,10 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `GOOGLE_CLIENT_ID` | Virgülle ayrılmış Google istemci kimlikleri (web, Android, iOS) | *(Boşsa Google girişi kapalı)* |
 | `TRUSTED_PROXY_COUNT` | Sunucunun önündeki güvenilir proxy sayısı; `0` ise `X-Forwarded-For` yok sayılır | `0` |
 | `ALLOWED_ORIGIN` | CORS ve WebSocket izin verilen origin (`*` veya domain) | `*` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Şifre sıfırlama e-postası için SMTP (STARTTLS, 587) | *(Boşsa e-posta gönderilmez)* |
+| `REPORT_NOTIFY_EMAIL` | Yeni şikâyet bildirim adresi | *(İsteğe bağlı)* |
+| `ADMIN_TOKEN` | `/admin` paneli anahtarı, en az 32 karakter | *(Boşsa panel kapalı)* |
+| `LEGAL_OWNER_NAME`, `LEGAL_CONTACT_EMAIL` | Hukuk metinlerindeki sahip ve iletişim bilgisi | *(Üretimde gerekli)* |
 | `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | `http://localhost:8080` |
 | `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | `ws://localhost:8080` |
 | `VITE_GOOGLE_CLIENT_ID` | Web Google giriş butonu için istemci kimliği | *(Boşsa buton gizli)* |
@@ -166,7 +172,10 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `POST` | `/shop/buy` | Sunucu doğrulamalı 3D zar seti satın alma |
 | `GET` | `/friends` | Arkadaş listesi, çevrimiçi/oyunda durumları, istekler ve oyun davetleri |
 | `POST` | `/friends/request` & `/friends/respond` & `/friends/invite` | Arkadaş ekleme, kabul/red ve özel odaya davet gönderme |
-| `POST` | `/ugc/report` & `/ugc/block` | Uygunsuz oyuncuyu raporlama ve engelleme (UGC Güvenliği) |
+| `POST` | `/ugc/report`, `/ugc/block`, `/ugc/unblock` | Oyuncuyu şikâyet etme, engelleme ve engeli kaldırma |
+| `GET` | `/ugc/blocks` | Engellenen oyuncuların listesi |
+| `GET / POST` | `/account/delete` | Web'den hesap silme veya silme talebi |
+| `GET / POST` | `/admin`, `/admin/queue`, `/admin/action` | Şikâyet ve silme taleplerinin moderasyonu (`ADMIN_TOKEN`) |
 | `GET` | `/leaderboard` | En çok galibiyet ve XP toplayan ilk 20 oyuncu listesi |
 | `GET` | `/privacy` & `/terms` | Mağaza başvuruları için resmi Gizlilik Politikası ve Kullanım Koşulları (HTML) |
 | `GET` | `/health` | Sunucu ve PostgreSQL veritabanı sağlık durumu kontrolü |
@@ -174,8 +183,8 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 ### WebSocket (`ws://localhost:8080/play?token=<JWT>`) Eylemleri
 Geçerli JWT olmadan bağlantı `401` ile reddedilir; oyuncu adı istemciden değil veritabanından alınır.
 
-- **Eşleşme Komutları:** `QUICK_MATCH`, `BOT_MATCH`, `CREATE_ROOM`, `JOIN_ROOM` (sanal giriş jetonu doğrulamalı)
-- **Oyun İçi Komutlar:** `ROLL_DICE` (Zar at), `TOGGLE_LOCK` (Zar kilitle/aç), `SCORE_SELECTED` (Kategori seç), `EMOJI` (Hızlı emoji), `CHAT` (Canlı sohbet mesajı)
+- **Eşleşme Komutları:** `QUICK_MATCH`, `BOT_MATCH`, `CREATE_ROOM`, `JOIN_ROOM` (sanal giriş jetonu doğrulamalı), `RESUME` (kopan maça dönüş; 60 saniye içinde)
+- **Oyun İçi Komutlar:** `ROLL_DICE` (Zar at), `TOGGLE_LOCK` (Zar kilitle/aç), `SCORE_SELECTED` (Kategori seç), `EMOJI` (Hızlı emoji), `CHAT` (Canlı sohbet mesajı), `LEAVE` (Maçtan bilerek çıkış, hemen hükmen yenilgi)
 - **Sunucu Yayını:** Her hamlede güncel zarlar, kilitler, iki oyuncunun skor tabloları, aktif tur, 30 saniyelik tur sayacı ve maç sonu ödülleri tüm odaya senkronize edilir.
 
 ---

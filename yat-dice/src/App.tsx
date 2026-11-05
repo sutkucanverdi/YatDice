@@ -800,7 +800,12 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)</p>
-                Yalnızca kullanıcı adınız, isteğe bağlı e-postanız ve oyun istatistikleriniz saklanır; verileriniz üçüncü taraflarla paylaşılmaz ve reklam takipçisi (IDFA) kullanılmaz. Dilediğiniz zaman <b>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</b> menüsünden hesabınızı ve tüm verilerinizi anında silebilirsiniz.
+                Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı <b>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</b> menüsünden silebilirsiniz.
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+                  <a href={`${API_BASE}/privacy`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Gizlilik Politikası</a>
+                  <a href={`${API_BASE}/terms`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Kullanım Koşulları</a>
+                  <a href={`${API_BASE}/account/delete`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Web'den Hesap Silme</a>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -873,6 +878,16 @@ function GoogleSignInButton({ dark, onCredential, onError }: {
   return <div ref={containerRef} style={{ display:"flex", justifyContent:"center", minHeight:44 }} />;
 }
 
+type ResumeState = {
+  dices: number[]; locked: boolean[]; rollsLeft: number; turn: "p1" | "p2"; round: number;
+  p1Scores: Record<string, number>; p2Scores: Record<string, number>;
+  p1Total: number; p2Total: number; secondsLeft: number;
+};
+type ResumedMatch = { playerIndex: number; opponentName: string; betAmount: number; state: ResumeState };
+type BlockedUser = { userId: number; username: string };
+
+const TERMS_REQUIRED_TEXT = "Devam etmek için kutuyu işaretleyerek koşulları kabul etmelisiniz.";
+
 function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: string) => void, dark: boolean }) {
   const c = C(dark);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
@@ -885,11 +900,21 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   const [infoMsg, setInfoMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [showLegal, setShowLegal] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(() => localStorage.getItem("yatzy_terms_accepted") === "yes");
+
+  const updateAcceptedTerms = (value: boolean) => {
+    setAcceptedTerms(value);
+    localStorage.setItem("yatzy_terms_accepted", value ? "yes" : "no");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setInfoMsg("");
+    if (authMode === "register" && !acceptedTerms) {
+      setError(TERMS_REQUIRED_TEXT);
+      return;
+    }
     setLoading(true);
 
     try {
@@ -898,7 +923,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         const res = await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password, email })
+          body: JSON.stringify({ username, password, email, acceptedTerms })
         });
         if (!res.ok) {
           const errText = await res.text();
@@ -927,7 +952,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
           setResetCode(data.resetCode);
           setInfoMsg(`Doğrulama kodunuz oluşturuldu: ${data.resetCode}`);
         } else {
-          setInfoMsg(data.message || "Doğrulama kodu gönderildi.");
+          setInfoMsg(data.message || "Bilgiler eşleşiyorsa doğrulama kodu e-postanıza gönderildi.");
         }
         setAuthMode("reset");
       } else if (authMode === "reset") {
@@ -955,13 +980,17 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   // Aynı cihazda her zaman aynı Misafir hesabına bağlanır
   const handleGuestLogin = async () => {
     setError("");
+    if (!acceptedTerms) {
+      setError(TERMS_REQUIRED_TEXT);
+      return;
+    }
     setLoading(true);
     const deviceId = getOrCreateDeviceId();
     try {
       const res = await fetch(`${API_BASE}/auth/guest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId })
+        body: JSON.stringify({ deviceId, acceptedTerms })
       });
       if (res.ok) {
         const data = await res.json();
@@ -984,7 +1013,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
       const res = await fetch(`${API_BASE}/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential })
+        body: JSON.stringify({ credential, acceptedTerms })
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -1030,7 +1059,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         {(authMode === "register" || authMode === "forgot") && (
           <div>
             <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>
-              E-posta {authMode === "register" ? "(Şifre kurtarma için önerilir)" : "(Kayıtlıysa girin)"}
+              E-posta {authMode === "register" ? "(Şifre kurtarma için gerekli)" : "(Hesabınızdaki adres)"}
             </label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="ornek@gmail.com" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
           </div>
@@ -1080,7 +1109,14 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
 
         {(authMode === "login" || authMode === "register") && (
           <>
-            {GOOGLE_CLIENT_ID && (
+            <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:11, lineHeight:1.4, color:c.textSub, cursor:"pointer" }}>
+              <input type="checkbox" checked={acceptedTerms} onChange={e => updateAcceptedTerms(e.target.checked)} style={{ marginTop:1, accentColor:c.accent }} />
+              <span>
+                13 yaşından büyüğüm; <a href={`${API_BASE}/terms`} target="_blank" rel="noreferrer" style={{ color:c.accent }}>Kullanım Koşulları</a>'nı ve <a href={`${API_BASE}/privacy`} target="_blank" rel="noreferrer" style={{ color:c.accent }}>Gizlilik Politikası</a>'nı kabul ediyorum.
+              </span>
+            </label>
+
+            {GOOGLE_CLIENT_ID && acceptedTerms && (
               <GoogleSignInButton dark={dark} onCredential={handleGoogleCredential} onError={setError} />
             )}
 
@@ -2263,15 +2299,19 @@ function ShopScreen({
 
 // ─── Screen 3: Game (Server-Authoritative + Turn Timer + Emojis + Wager) ─────
 function GameScreen({
-  go, dark, diceMat, profile, setProfile, ws, myPlayerIndex, opponentName, onMatchEnd, activeBet
+  go, dark, diceMat, profile, setProfile, ws, myPlayerIndex, opponentName, onMatchEnd, activeBet,
+  reconnecting, resumeState, onCloseSocket, onMatchResumed, onResumeFailed, onSessionReplaced
 }: {
   go:(s:Screen)=>void; dark:boolean; diceMat:DieMat; profile:UserProfile;
   setProfile:React.Dispatch<React.SetStateAction<UserProfile>>;
   ws:WebSocket|null; myPlayerIndex:number; opponentName:string;
   onMatchEnd:(summary: MatchSummary)=>void; activeBet:number;
+  reconnecting:boolean; resumeState:ResumeState|null; onCloseSocket:()=>void;
+  onMatchResumed:(data:ResumedMatch)=>void; onResumeFailed:()=>void; onSessionReplaced:()=>void;
 }) {
   const c = C(dark);
 
+  const [opponentOffline, setOpponentOffline] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [dieStates, setDieStates] = useState<DieState[]>(()=>{
     const pos = generateRandomPositions();
@@ -2311,6 +2351,23 @@ function GameScreen({
     if (next) sfx.lock(true);
   };
 
+  const unblockOpponent = async () => {
+    const headers = { "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "") };
+    try {
+      const res = await fetch(`${API_BASE}/ugc/blocks`, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      const target = (data.blocked as BlockedUser[]).find(item => item.username === opponentName);
+      if (target) {
+        await fetch(`${API_BASE}/ugc/unblock`, {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: target.userId })
+        });
+      }
+    } catch {}
+  };
+
   const toggleMuteBlockOpponent = async () => {
     const next = !opponentMuted;
     setOpponentMuted(next);
@@ -2329,7 +2386,8 @@ function GameScreen({
         });
       } catch {}
     } else {
-      emitToast(`${opponentName || "Rakip"} için susturma kaldırıldı.`);
+      emitToast(`${opponentName || "Rakip"} için engel kaldırıldı.`);
+      unblockOpponent();
     }
   };
 
@@ -2397,8 +2455,33 @@ function GameScreen({
   const handleLeave = () => setShowLeaveConfirm(true);
 
   const confirmLeave = () => {
-    if (ws) ws.close();
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "LEAVE" }));
+    onCloseSocket();
     go("home");
+  };
+
+  // Geri bağlanınca maç durumunu sunucudan gelen anlık görüntüyle değiştirir
+  useEffect(() => {
+    if (!resumeState) return;
+    setP1Scores(resumeState.p1Scores || {});
+    setP2Scores(resumeState.p2Scores || {});
+    setP1Total(resumeState.p1Total);
+    setP2Total(resumeState.p2Total);
+    setCurrentPlayer(resumeState.turn);
+    setRound(resumeState.round);
+    setRollsLeft(resumeState.rollsLeft);
+    setLocked(resumeState.locked);
+    setTurnTimeLeft(resumeState.secondsLeft);
+    setRolling(false);
+    setDieStates(prev => prev.map((die, i) => {
+      const value = resumeState.dices[i] as DieVal;
+      const target = targetRot(value, die.rx, die.ry);
+      return { ...die, value, rx: target.rx, ry: target.ry };
+    }));
+  }, [resumeState]);
+
+  const sendGame = (payload: Record<string, unknown>) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
   };
 
   useEffect(() => {
@@ -2407,7 +2490,22 @@ function GameScreen({
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      if (data.type === "DICE_ROLLED") {
+      if (data.type === "MATCH_FOUND" && data.resumed) {
+        onMatchResumed(data);
+      }
+      else if (data.type === "RESUME_FAILED") {
+        onResumeFailed();
+      }
+      else if (data.type === "SESSION_REPLACED") {
+        onSessionReplaced();
+      }
+      else if (data.type === "OPPONENT_DISCONNECTED") {
+        setOpponentOffline(true);
+      }
+      else if (data.type === "OPPONENT_RECONNECTED") {
+        setOpponentOffline(false);
+      }
+      else if (data.type === "DICE_ROLLED") {
         if (!isMyTurn) sfx.roll();
         const syncedLocked: boolean[] = data.locked || [false,false,false,false,false];
         setLocked(syncedLocked);
@@ -2457,6 +2555,7 @@ function GameScreen({
       }
       else if (data.type === "OPPONENT_LEFT") {
         setOpponentLeft(true);
+        setOpponentOffline(false);
         const rXp = data.reward?.xp ?? 150;
         const rTokens = data.reward?.tokens ?? 50;
 
@@ -2472,7 +2571,7 @@ function GameScreen({
            }
         }));
         
-        if (ws) ws.close();
+        onCloseSocket();
         setTimeout(() => {
           go("home");
         }, 3500); 
@@ -2547,19 +2646,19 @@ function GameScreen({
           });
 
           setTimeout(() => {
-            if (ws) ws.close();
+            onCloseSocket();
             go("result");
           }, 1600);
         }
       }
     };
-  }, [ws, myPlayerIndex, myPlayerId, isMyTurn, opponentName, profile.name, profile.seed, go, onMatchEnd, setProfile]);
+  }, [ws, myPlayerIndex, myPlayerId, isMyTurn, opponentName, profile.name, profile.seed, go, onMatchEnd, setProfile, onCloseSocket, onMatchResumed, onResumeFailed, onSessionReplaced]);
 
   const doRoll = () => {
-    if (!isMyTurn || rollsLeft===0 || rolling || !ws) return; 
+    if (!isMyTurn || rollsLeft===0 || rolling || !ws || reconnecting) return; 
     sfx.roll();
     setRolling(true);
-    ws.send(JSON.stringify({ type: "ROLL_DICE", locked: locked }));
+    sendGame({ type: "ROLL_DICE", locked: locked });
   };
 
   const toggleLock = (i:number) => {
@@ -2568,14 +2667,14 @@ function GameScreen({
     newLocked[i] = !newLocked[i];
     sfx.lock(newLocked[i]);
     setLocked(newLocked);
-    ws.send(JSON.stringify({ type: "TOGGLE_LOCK", locked: newLocked }));
+    sendGame({ type: "TOGGLE_LOCK", locked: newLocked });
   };
 
   const scoreIt = (key:string) => {
     if (!isMyTurn || rolling || rollsLeft===3 || !ws) return;
     if (myScores[key] != null) return;
     // Puanı sunucu hesaplayıp her iki oyuncuya SCORE_SELECTED olarak yayınlar
-    ws.send(JSON.stringify({ type: "SCORE_SELECTED", key: key }));
+    sendGame({ type: "SCORE_SELECTED", key: key });
   };
 
   const sendEmoji = (emoji: string) => {
@@ -2588,7 +2687,7 @@ function GameScreen({
     }
     setEmojiCooldown(true);
     setTimeout(() => setEmojiCooldown(false), 2000);
-    ws.send(JSON.stringify({ type: "EMOJI", emoji }));
+    sendGame({ type: "EMOJI", emoji });
   };
 
   const sendChat = (customText?: string) => {
@@ -2601,7 +2700,7 @@ function GameScreen({
     }
     setChatCooldown(true);
     setTimeout(() => setChatCooldown(false), 2500);
-    ws.send(JSON.stringify({ type: "CHAT", text: txt.slice(0, 120) }));
+    sendGame({ type: "CHAT", text: txt.slice(0, 120) });
     if (!customText) setChatInput("");
   };
 
@@ -2965,6 +3064,12 @@ function GameScreen({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {(reconnecting || opponentOffline) && (
+        <div role="status" style={{ position:"absolute", top:58, left:12, right:12, zIndex:90, background:c.panel, border:`1px solid ${c.gold}`, color:c.gold, borderRadius:10, padding:"8px 12px", fontSize:12, fontWeight:700, textAlign:"center", backdropFilter:"blur(6px)" }}>
+          {reconnecting ? "Bağlantı koptu, maça geri dönülüyor..." : "Rakibin bağlantısı koptu, geri dönmesi bekleniyor..."}
+        </div>
+      )}
 
       {/* Rakip Sohbet Mesajı Önizleme Balonu (Sohbet kapalıyken) */}
       <AnimatePresence>
@@ -3703,8 +3808,34 @@ function FriendsScreen({
 }) {
   const c = C(dark);
   const [searchName, setSearchName] = useState("");
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [statusMsg, setStatusMsg] = useState<{ text: string; isErr: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    fetch(`${API_BASE}/ugc/blocks`, { headers: { "Authorization": "Bearer " + token } })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (active && data) setBlockedUsers(data.blocked || []);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [token]);
+
+  const unblockUser = async (userId: number) => {
+    try {
+      const res = await fetch(`${API_BASE}/ugc/unblock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ userId })
+      });
+      if (res.ok) setBlockedUsers(prev => prev.filter(item => item.userId !== userId));
+    } catch {
+      setStatusMsg({ text: "Engel kaldırılamadı.", isErr: true });
+    }
+  };
 
   const isGuest = !token || token.startsWith("guest_token_");
 
@@ -3829,6 +3960,24 @@ function FriendsScreen({
             </div>
           )}
 
+          {blockedUsers.length > 0 && (
+            <div>
+              <p style={{ fontSize: 10, fontWeight: 700, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                Engellenenler ({blockedUsers.length})
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {blockedUsers.map(item => (
+                  <div key={item.userId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: c.panel, border: `1px solid ${c.border}`, borderRadius: 12, padding: "9px 12px" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>{item.username}</span>
+                    <button onClick={() => unblockUser(item.userId)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, color: c.textSub, borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Engeli Kaldır
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Arkadaş Listesi */}
           <div>
             <p style={{ fontSize: 10, fontWeight: 700, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
@@ -3909,11 +4058,18 @@ function FriendsScreen({
 
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem("yatzy_jwt_token"));
-  const cancelledSocketRef = useRef<WebSocket | null>(null);
+  const closedByAppRef = useRef(new WeakSet<WebSocket>());
+  const resumeInFlightRef = useRef(false);
+  const reconnectRef = useRef<(attempt?: number) => void>(() => {});
+  const [reconnecting, setReconnecting] = useState(false);
+  const [resumeState, setResumeState] = useState<ResumeState | null>(null);
+  const [profileRefresh, setProfileRefresh] = useState(0);
   const contentRef = useRef<HTMLDivElement>(null);
   const savedUsername = localStorage.getItem("yatzy_username") || "Oyuncu 1";
   const [screen, setScreen] = useState<Screen>(localStorage.getItem("yatzy_jwt_token") ? "home" : "auth");
   const hasBottomNav = screen !== "auth" && screen !== "result" && screen !== "game";
+  const screenRef = useRef(screen);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
 
   const [dark, setDark] = useState(true);
   const [dieMat, setDieMat] = useState<DieMat>("ivory");
@@ -4059,8 +4215,14 @@ export default function App() {
     setScreen("auth");
   }, []);
 
+  const closeSocket = useCallback((socket: WebSocket | null) => {
+    if (!socket) return;
+    closedByAppRef.current.add(socket);
+    socket.close();
+  }, []);
+
   const handleLogout = () => {
-    if (ws) ws.close();
+    closeSocket(ws);
     clearSession();
   };
 
@@ -4114,12 +4276,13 @@ export default function App() {
         setDieMat(data.selectedDice as DieMat);
       }
       setProfileLoaded(true);
+      if (data.activeMatch) reconnectRef.current();
     })
     .catch(err => {
       console.error("Veritabanı okuma hatası:", err);
       setProfileLoaded(true);
     });
-  }, [token, clearSession]);
+  }, [token, clearSession, profileRefresh]);
 
   // Bağlantı reddedildiyse oturumun geçerliliğini kontrol eder (WebSocket HTTP durumunu göstermez)
   const handleSocketRejected = async () => {
@@ -4138,13 +4301,76 @@ export default function App() {
     emitToast("Sunucuya bağlanılamadı. Lütfen tekrar dene.");
   };
 
+  const handleMatchResumed = useCallback((data: ResumedMatch) => {
+    resumeInFlightRef.current = false;
+    setMyPlayerIndex(data.playerIndex);
+    setOpponentName(data.opponentName || "Rakip");
+    setActiveBet(data.betAmount || 0);
+    setResumeState(data.state);
+    setReconnecting(false);
+    setIsSearching(false);
+    setCreatedRoomCode(null);
+    setScreen("game");
+  }, []);
+
+  const handleResumeFailed = useCallback(() => {
+    resumeInFlightRef.current = false;
+    setReconnecting(false);
+    setResumeState(null);
+    if (screenRef.current === "game") {
+      emitToast("Maça geri dönülemedi, maç sona erdi.");
+      setScreen("home");
+    }
+    setProfileRefresh(value => value + 1);
+  }, []);
+
+  const handleSessionReplaced = useCallback(() => {
+    closeSocket(ws);
+    setReconnecting(false);
+    emitToast("Bu maç başka bir cihazda açıldı.");
+    setScreen("home");
+  }, [closeSocket, ws]);
+
+  const closeCurrentSocket = useCallback(() => closeSocket(ws), [closeSocket, ws]);
+
+  const reconnectToMatch = (attempt = 0) => {
+    const savedToken = localStorage.getItem("yatzy_jwt_token");
+    if (!savedToken || (attempt === 0 && resumeInFlightRef.current)) return;
+    if (attempt >= 20) {
+      handleResumeFailed();
+      return;
+    }
+    resumeInFlightRef.current = true;
+    setReconnecting(screenRef.current === "game");
+
+    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(savedToken)}`);
+    let opened = false;
+    socket.onopen = () => {
+      opened = true;
+      socket.send(JSON.stringify({ action: "RESUME" }));
+    };
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "MATCH_FOUND" && data.resumed) handleMatchResumed(data);
+      else if (data.type === "RESUME_FAILED") handleResumeFailed();
+    };
+    socket.onclose = () => {
+      if (closedByAppRef.current.has(socket) || screenRef.current !== "game") {
+        resumeInFlightRef.current = false;
+        return;
+      }
+      setTimeout(() => reconnectRef.current(opened ? 1 : attempt + 1), 3000);
+    };
+    setWs(socket);
+  };
+
+  useEffect(() => { reconnectRef.current = reconnectToMatch; });
+
   const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number, betOverride?: BetOption) => {
     if (isSearching || !token) return;
     const requestedBet = betOverride ?? betAmount;
     const effectiveBet: BetOption = profile.tokens >= requestedBet ? requestedBet : 0;
-    if (ws) {
-      ws.close();
-    }
+    closeSocket(ws);
     setIsSearching(true);
     
     const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(token)}`);
@@ -4165,8 +4391,12 @@ export default function App() {
           sendGameInvite(autoInviteFriendId, data.roomCode);
         }
       }
+      else if (data.type === "MATCH_FOUND" && data.resumed) {
+        handleMatchResumed(data);
+      }
       else if (data.type === "MATCH_FOUND") {
         sfx.pop();
+        setResumeState(null);
         const matchBet = typeof data.betAmount === "number" ? data.betAmount : effectiveBet;
         setActiveBet(matchBet);
         if (matchBet > 0) {
@@ -4192,7 +4422,10 @@ export default function App() {
     socket.onclose = () => {
       setIsSearching(false);
       setCreatedRoomCode(null);
-      if (!opened && cancelledSocketRef.current !== socket) {
+      if (closedByAppRef.current.has(socket)) return;
+      if (screenRef.current === "game") {
+        reconnectRef.current();
+      } else if (!opened) {
         handleSocketRejected();
       }
     };
@@ -4201,10 +4434,7 @@ export default function App() {
   };
 
   const cancelMatchmaking = () => {
-    if (ws) {
-      cancelledSocketRef.current = ws;
-      ws.close();
-    }
+    closeSocket(ws);
     setIsSearching(false);
     setCreatedRoomCode(null);
     setWs(null);
@@ -4419,6 +4649,9 @@ export default function App() {
                   ws={ws} myPlayerIndex={myPlayerIndex}
                   opponentName={opponentName} onMatchEnd={setMatchSummary}
                   activeBet={activeBet}
+                  reconnecting={reconnecting} resumeState={resumeState}
+                  onCloseSocket={closeCurrentSocket} onMatchResumed={handleMatchResumed}
+                  onResumeFailed={handleResumeFailed} onSessionReplaced={handleSessionReplaced}
                 />
               )}
               {screen==="result" && (

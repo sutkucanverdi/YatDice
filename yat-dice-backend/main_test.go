@@ -156,11 +156,11 @@ func TestGoogleAuthAccountRules(t *testing.T) {
 		t.Fatalf("request without credential: got %d", rec.Code)
 	}
 
-	first := call(`{"credential":"t"}`)
+	first := call(`{"credential":"t","acceptedTerms":true}`)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first google login: got %d: %s", first.Code, first.Body)
 	}
-	second := call(`{"credential":"t"}`)
+	second := call(`{"credential":"t","acceptedTerms":true}`)
 	var a, b struct {
 		Username string `json:"username"`
 	}
@@ -176,7 +176,7 @@ func TestGoogleAuthAccountRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenInfo = fmt.Sprintf(`{"iss":"accounts.google.com","aud":"web-id","sub":"other-%s","email":%q,"email_verified":"true"}`, suffix, claimed)
-	if rec := call(`{"credential":"t"}`); rec.Code != http.StatusConflict {
+	if rec := call(`{"credential":"t","acceptedTerms":true}`); rec.Code != http.StatusConflict {
 		t.Fatalf("existing email should not auto-link: got %d", rec.Code)
 	}
 }

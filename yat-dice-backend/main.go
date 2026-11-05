@@ -29,7 +29,8 @@ const (
 	RoomExpiryMinutes   = 10
 	PongWait            = 60 * time.Second
 	PingPeriod          = (PongWait * 9) / 10
-	BcryptCost          = 10 // Cost 14 DoS riskine yol açtığı için 10'a çekildi
+	ReconnectGrace      = 60 * time.Second // Kopan oyuncunun maça dönmek için süresi
+	BcryptCost          = 10               // Cost 14 DoS riskine yol açtığı için 10'a çekildi
 
 	defaultDevJWTSecret    = "dev-secret-change-in-production"
 	minJWTSecretLength     = 32
@@ -107,6 +108,8 @@ type Client struct {
 	BetAmount   int
 	LastEmojiAt time.Time
 	LastChatAt  time.Time
+
+	Disconnected bool // Room.Mu ile korunur: bağlantı koptu, geri dönüş bekleniyor
 }
 
 var profanityList = []string{
@@ -189,7 +192,7 @@ type GameInvite struct {
 }
 
 var (
-	waitingClient  *Client
+	waitingClients []*Client
 	privateRooms   = make(map[string]PrivateRoomEntry)
 	pendingInvites = make(map[int][]GameInvite) // targetUserID -> gelen oyun davetleri
 	inviteSeq      int
@@ -244,10 +247,104 @@ func randomDie() int {
 	return secureRandInt(6) + 1
 }
 
+var (
+	liveMu      sync.Mutex // Yaprak kilit: tutulurken başka kilit alınmaz
+	liveClients = make(map[int]map[*Client]struct{})
+	activeGames = make(map[int]*Room)
+)
+
+func registerLiveClient(c *Client) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	if liveClients[c.UserID] == nil {
+		liveClients[c.UserID] = make(map[*Client]struct{})
+	}
+	liveClients[c.UserID][c] = struct{}{}
+}
+
+func unregisterLiveClient(c *Client) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	delete(liveClients[c.UserID], c)
+	if len(liveClients[c.UserID]) == 0 {
+		delete(liveClients, c.UserID)
+	}
+}
+
+// Kapatılan veya silinen hesabın açık bağlantılarını keser
+func disconnectUser(userID int) {
+	liveMu.Lock()
+	clients := make([]*Client, 0, len(liveClients[userID]))
+	for c := range liveClients[userID] {
+		clients = append(clients, c)
+	}
+	liveMu.Unlock()
+	for _, c := range clients {
+		_ = c.Conn.Close()
+	}
+}
+
+func setActiveGame(userID int, room *Room) {
+	if userID <= 0 {
+		return
+	}
+	liveMu.Lock()
+	activeGames[userID] = room
+	liveMu.Unlock()
+}
+
+func activeGameFor(userID int) *Room {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	return activeGames[userID]
+}
+
+func clearActiveGame(r *Room) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	for _, p := range []*Client{r.Player1, r.Player2} {
+		if p != nil && activeGames[p.UserID] == r {
+			delete(activeGames, p.UserID)
+		}
+	}
+}
+
+// Kuyrukta, bu oyuncuyla eşleşebilecek ilk rakibi bulur (mu tutulurken çağrılır)
+func takeWaitingOpponent(client *Client) *Client {
+	for i, candidate := range waitingClients {
+		if candidate == client || candidate.UserID == client.UserID || isBlockedEither(candidate.UserID, client.UserID) {
+			continue
+		}
+		waitingClients = append(waitingClients[:i:i], waitingClients[i+1:]...)
+		return candidate
+	}
+	return nil
+}
+
+func isUserQueued(userID int) bool {
+	for _, candidate := range waitingClients {
+		if candidate.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeFromQueue(client *Client) {
+	for i, candidate := range waitingClients {
+		if candidate == client {
+			waitingClients = append(waitingClients[:i:i], waitingClients[i+1:]...)
+			return
+		}
+	}
+}
+
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Email    string `json:"email"`
+
+	AcceptedTerms bool `json:"acceptedTerms"`
 }
 
 func loadDotEnv(paths ...string) {
@@ -342,6 +439,7 @@ func startRoomCleanupWorker() {
 				}
 			}
 			mu.Unlock()
+			pruneChatRecords()
 		}
 	}()
 }
@@ -539,8 +637,144 @@ func newRoom(id string, p1, p2 *Client) *Room {
 		P1Scores:  make(map[string]int),
 		P2Scores:  make(map[string]int),
 	}
+	if p1 != nil {
+		setActiveGame(p1.UserID, r)
+	}
+	if p2 != nil {
+		setActiveGame(p2.UserID, r)
+	}
 	r.resetTurnTimerLocked()
 	return r
+}
+
+func (r *Room) opponentOf(client *Client) *Client {
+	if r.Player1 == client {
+		return r.Player2
+	}
+	return r.Player1
+}
+
+// Maçı hükmen bitirir (r.Mu tutulurken çağrılır)
+func (r *Room) forfeitLocked(loser *Client) {
+	r.GameOver = true
+	r.stopTurnTimerLocked()
+	clearActiveGame(r)
+
+	opponent := r.opponentOf(loser)
+	if opponent == nil {
+		return
+	}
+	forfeitTokens := 50 + (r.BetAmount * 2)
+	awardMatchResultDB(opponent.UserID, true, 0, 150, forfeitTokens, 0, false, 0)
+	_ = opponent.WriteJSON(map[string]interface{}{
+		"type": "OPPONENT_LEFT",
+		"reward": map[string]int{
+			"xp":     150,
+			"tokens": forfeitTokens,
+		},
+	})
+	opponent.Room = nil
+	if !opponent.Disconnected {
+		setUserGameState(opponent.UserID, false)
+	}
+}
+
+// Bağlantısı kopan oyuncuya geri dönmesi için süre tanır
+func (r *Room) handleDisconnect(client *Client) {
+	r.Mu.Lock()
+	defer r.Mu.Unlock()
+	setUserGameState(client.UserID, false)
+	if r.GameOver || (r.Player1 != client && r.Player2 != client) {
+		return
+	}
+	client.Disconnected = true
+	if opponent := r.opponentOf(client); opponent != nil {
+		_ = opponent.WriteJSON(map[string]interface{}{
+			"type":    "OPPONENT_DISCONNECTED",
+			"seconds": int(ReconnectGrace / time.Second),
+		})
+	}
+	go func() {
+		time.Sleep(ReconnectGrace)
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		if !r.GameOver && (r.Player1 == client || r.Player2 == client) {
+			r.forfeitLocked(client)
+		}
+	}()
+}
+
+// Oyuncunun devam eden maçına yeni bağlantıyı bağlar (mu tutulurken çağrılır)
+func tryResumeGame(client *Client) bool {
+	room := activeGameFor(client.UserID)
+	if room == nil {
+		return false
+	}
+	room.Mu.Lock()
+	defer room.Mu.Unlock()
+	if room.GameOver {
+		return false
+	}
+
+	slot := &room.Player1
+	playerIndex := 1
+	if room.Player2 != nil && room.Player2.UserID == client.UserID {
+		slot = &room.Player2
+		playerIndex = 2
+	}
+	previous := *slot
+	if previous == nil || previous.UserID != client.UserID {
+		return false
+	}
+	*slot = client
+	client.Room = room
+	client.BetAmount = room.BetAmount
+	if previous.Disconnected {
+		setUserGameState(client.UserID, true)
+	} else {
+		previous.Room = nil
+		_ = previous.WriteJSON(map[string]interface{}{"type": "SESSION_REPLACED"})
+		go func() { _ = previous.Conn.Close() }()
+	}
+
+	opponent := room.opponentOf(client)
+	opponentName := "🤖 YatBot"
+	if opponent != nil {
+		opponentName = opponent.Username
+		_ = opponent.WriteJSON(map[string]interface{}{"type": "OPPONENT_RECONNECTED"})
+	}
+	p1Total, p1Upper, p1Bonus := computeTotalAndBonus(room.P1Scores)
+	p2Total, p2Upper, p2Bonus := computeTotalAndBonus(room.P2Scores)
+	secondsLeft := int(time.Until(room.TurnDeadline).Seconds())
+	if secondsLeft < 0 {
+		secondsLeft = 0
+	}
+	_ = client.WriteJSON(map[string]interface{}{
+		"type":         "MATCH_FOUND",
+		"resumed":      true,
+		"room":         room.ID,
+		"playerIndex":  playerIndex,
+		"opponentName": opponentName,
+		"turnSeconds":  TurnDurationSeconds,
+		"betAmount":    room.BetAmount,
+		"state": map[string]interface{}{
+			"dices":       room.Dice,
+			"locked":      room.Locked,
+			"rollsLeft":   room.RollsLeft,
+			"turn":        room.Turn,
+			"round":       room.Round,
+			"p1Scores":    room.P1Scores,
+			"p2Scores":    room.P2Scores,
+			"p1Total":     p1Total,
+			"p2Total":     p2Total,
+			"p1Upper":     p1Upper,
+			"p2Upper":     p2Upper,
+			"p1Bonus":     p1Bonus,
+			"p2Bonus":     p2Bonus,
+			"secondsLeft": secondsLeft,
+		},
+	})
+	return true
 }
 
 func (r *Room) stopTurnTimerLocked() {
@@ -654,6 +888,7 @@ func (r *Room) applyScoreLocked(key string, autoSelected bool) {
 	if isGameOver {
 		r.GameOver = true
 		r.stopTurnTimerLocked()
+		clearActiveGame(r)
 	} else {
 		r.resetTurnTimerLocked()
 		if r.IsBotMatch && r.Turn == "p2" {
@@ -978,6 +1213,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{Conn: ws, UserID: userID, Username: username}
+	registerLiveClient(client)
 
 	// Ping/Pong ve ReadDeadline ayarları (Hayalet bağlantıları tespit eder)
 	ws.SetReadLimit(8192)
@@ -1012,10 +1248,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		close(done)
 		ws.Close()
 
+		unregisterLiveClient(client)
 		mu.Lock()
-		if waitingClient == client {
-			waitingClient = nil
-		}
+		removeFromQueue(client)
 		for code, entry := range privateRooms {
 			if entry.Host == client {
 				delete(privateRooms, code)
@@ -1025,38 +1260,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		client.Room = nil
 		mu.Unlock()
 		if room != nil {
-			setUserGameState(client.UserID, false)
-		}
-
-		// Oyuncu aktif ve bitmemiş bir oyundayken çıkarsa rakibine Hükmen Galibiyet ver
-		if room != nil {
-			room.Mu.Lock()
-			if !room.GameOver {
-				room.GameOver = true
-				room.stopTurnTimerLocked()
-
-				var opponent *Client
-				if room.Player1 == client {
-					opponent = room.Player2
-				} else {
-					opponent = room.Player1
-				}
-
-				if opponent != nil {
-					forfeitTokens := 50 + (room.BetAmount * 2)
-					awardMatchResultDB(opponent.UserID, true, 0, 150, forfeitTokens, 0, false, 0)
-					_ = opponent.WriteJSON(map[string]interface{}{
-						"type": "OPPONENT_LEFT",
-						"reward": map[string]int{
-							"xp":     150,
-							"tokens": forfeitTokens,
-						},
-					})
-					opponent.Room = nil
-					setUserGameState(opponent.UserID, false)
-				}
-			}
-			room.Mu.Unlock()
+			room.handleDisconnect(client)
 		}
 	}()
 
@@ -1088,6 +1292,17 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			// Devam eden maçı olan oyuncu yeni maça değil, o maça döner
+			if tryResumeGame(client) {
+				mu.Unlock()
+				continue
+			}
+			if action == "RESUME" {
+				_ = client.WriteJSON(map[string]interface{}{"type": "RESUME_FAILED"})
+				mu.Unlock()
+				continue
+			}
+
 			requestedBet := normalizeBet(msg["betAmount"])
 			client.BetAmount = requestedBet
 
@@ -1098,9 +1313,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				// Bota karşı anında tek oyunculu maç başlat
-				if waitingClient == client {
-					waitingClient = nil
-				}
+				removeFromQueue(client)
 				roomCounter++
 				roomID := fmt.Sprintf("BOT-ROOM-%d", roomCounter)
 				room := newRoom(roomID, client, nil)
@@ -1122,18 +1335,18 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					requestedBet = 0
 					client.BetAmount = 0
 				}
-				// Aynı hesabın ikinci bağlantıdan kendisiyle eşleşmesini önle
-				if waitingClient != nil && waitingClient != client && waitingClient.UserID == client.UserID {
+				removeFromQueue(client)
+				// Aynı hesabın ikinci bağlantıdan kuyruğa girmesini önle
+				if isUserQueued(client.UserID) {
 					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Bu hesap zaten eşleşme kuyruğunda!"})
 					mu.Unlock()
 					continue
 				}
-				// Aynı oyuncunun kendi kendisiyle eşleşmesini önle
-				if waitingClient == nil || waitingClient == client {
-					waitingClient = client
+				opponent := takeWaitingOpponent(client)
+				if opponent == nil {
+					waitingClients = append(waitingClients, client)
 					_ = client.WriteJSON(map[string]interface{}{"type": "WAITING_FOR_OPPONENT"})
 				} else {
-					opponent := waitingClient
 					matchBet := opponent.BetAmount
 					if requestedBet < matchBet {
 						matchBet = requestedBet
@@ -1141,7 +1354,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					if !deductBothBetsDB(opponent.UserID, client.UserID, matchBet) {
 						matchBet = 0
 					}
-					waitingClient = nil
 
 					roomCounter++
 					roomID := fmt.Sprintf("ROOM-%d", roomCounter)
@@ -1194,7 +1406,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				code := strings.ToUpper(strings.TrimSpace(codeRaw))
 				entry, exists := privateRooms[code]
 
-				if exists && entry.Host != nil && entry.Host != client && entry.Host.UserID != client.UserID {
+				if exists && entry.Host != nil && entry.Host != client && entry.Host.UserID != client.UserID && !isBlockedEither(entry.Host.UserID, client.UserID) {
 					matchBet := entry.BetAmount
 					if !deductBothBetsDB(entry.Host.UserID, client.UserID, matchBet) {
 						matchBet = 0
@@ -1252,7 +1464,19 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			playerRole = "p2"
 		}
 
+		// Maç sırasında engellenen oyuncudan mesaj iletilmez; gönderen yalnızca kendi mesajını görür
+		deliverSocial := func(payload map[string]interface{}) {
+			if opponent := room.opponentOf(client); opponent != nil && isBlockedEither(client.UserID, opponent.UserID) {
+				_ = client.WriteJSON(payload)
+				return
+			}
+			room.broadcastLocked(payload)
+		}
+
 		switch msgType {
+		case "LEAVE":
+			room.forfeitLocked(client)
+
 		case "EMOJI":
 			// Hızlı Emoji / Reaksiyon gönderimi (Anti-spam: 2 saniyede en fazla 1 emoji)
 			if time.Since(client.LastEmojiAt) < 2000*time.Millisecond {
@@ -1266,7 +1490,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			emoji, ok := msg["emoji"].(string)
 			if ok && len(emoji) > 0 && len(emoji) <= 16 {
 				client.LastEmojiAt = time.Now()
-				room.broadcastLocked(map[string]interface{}{
+				deliverSocial(map[string]interface{}{
 					"type":   "EMOJI",
 					"emoji":  emoji,
 					"sender": playerRole,
@@ -1290,8 +1514,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			client.LastChatAt = time.Now()
+			recordChatMessage(client.UserID, strings.TrimSpace(rawText))
 			nowStr := time.Now().Format("15:04")
-			room.broadcastLocked(map[string]interface{}{
+			deliverSocial(map[string]interface{}{
 				"type":       "CHAT",
 				"sender":     playerRole,
 				"senderName": client.Username,
@@ -1471,6 +1696,25 @@ func createTables() {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(blocker_id, blocked_username)
 		);`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason VARCHAR(255) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS tokens_valid_after TIMESTAMPTZ;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ;`,
+		`ALTER TABLE user_blocks ADD COLUMN IF NOT EXISTS blocked_id INT REFERENCES users(id) ON DELETE CASCADE;`,
+		`UPDATE user_blocks b SET blocked_id = u.id FROM users u WHERE b.blocked_id IS NULL AND LOWER(u.username) = LOWER(b.blocked_username);`,
+		`DELETE FROM user_blocks WHERE blocked_id IS NULL;`,
+		`CREATE INDEX IF NOT EXISTS user_blocks_pair ON user_blocks (blocker_id, blocked_id);`,
+		`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS reported_user_id INT;`,
+		`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS evidence TEXT DEFAULT '';`,
+		`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'open';`,
+		`ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;`,
+		`CREATE TABLE IF NOT EXISTS deletion_requests (
+			id SERIAL PRIMARY KEY,
+			username VARCHAR(60) NOT NULL,
+			email VARCHAR(255) DEFAULT '',
+			status VARCHAR(20) DEFAULT 'open',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (LOWER(username));`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique ON users (google_id) WHERE google_id <> '';`,
 	}
@@ -1480,6 +1724,7 @@ func createTables() {
 		}
 	}
 
+	pruneResolvedReports()
 	fmt.Println("📦 Veritabanı tabloları ve şema güncellemeleri hazırlandı!")
 }
 
@@ -1502,6 +1747,8 @@ func setupCORS(w *http.ResponseWriter, r *http.Request) bool {
 	}
 	return false
 }
+
+const termsRequiredMessage = "Devam etmek için Kullanım Koşulları ve Gizlilik Politikası'nı kabul etmelisiniz."
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	if setupCORS(&w, r) {
@@ -1527,6 +1774,18 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
 		return
 	}
+	if len(creds.Password) > 72 {
+		http.Error(w, "Şifre en fazla 72 karakter olabilir", http.StatusBadRequest)
+		return
+	}
+	if creds.Email != "" && !validEmailAddress(creds.Email) {
+		http.Error(w, "Geçerli bir e-posta adresi girin", http.StatusBadRequest)
+		return
+	}
+	if !creds.AcceptedTerms {
+		http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+		return
+	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(creds.Password), BcryptCost)
 	if err != nil {
@@ -1535,7 +1794,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userID int
-	err = db.QueryRow("INSERT INTO users (username, password_hash, email, is_guest) VALUES ($1, $2, $3, FALSE) RETURNING id",
+	err = db.QueryRow("INSERT INTO users (username, password_hash, email, is_guest, terms_accepted_at) VALUES ($1, $2, $3, FALSE, NOW()) RETURNING id",
 		creds.Username, string(hashedPassword), creds.Email).Scan(&userID)
 	if err != nil {
 		http.Error(w, "Bu kullanıcı adı zaten alınmış", http.StatusConflict)
@@ -1589,6 +1848,10 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resetLoginFailures(creds.Username)
+	if isUserBanned(userID) {
+		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		return
+	}
 
 	tokenString, err := issueJWTForUser(userID, 7)
 	if err != nil {
@@ -1618,6 +1881,7 @@ type ProfileData struct {
 	TotalYachts      int      `json:"totalYachts"`
 	MaxYachtsInMatch int      `json:"maxYachtsInMatch"`
 	ClaimedQuests    []string `json:"claimedQuests"`
+	ActiveMatch      bool     `json:"activeMatch"`
 }
 
 func parseTokenString(tokenString string) (string, error) {
@@ -1631,9 +1895,14 @@ func parseTokenString(tokenString string) (string, error) {
 	if err != nil || !token.Valid {
 		return "", fmt.Errorf("geçersiz token")
 	}
-	if uid, err := strconv.Atoi(claims.Subject); err == nil {
-		touchUserPresence(uid)
+	uid, err := strconv.Atoi(claims.Subject)
+	if err != nil || claims.IssuedAt == nil {
+		return "", fmt.Errorf("geçersiz token")
 	}
+	if err := ensureSessionActive(uid, claims.IssuedAt.Time); err != nil {
+		return "", err
+	}
+	touchUserPresence(uid)
 	return claims.Subject, nil
 }
 
@@ -1702,6 +1971,9 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
 		return
+	}
+	if uid, err := strconv.Atoi(userID); err == nil {
+		p.ActiveMatch = activeGameFor(uid) != nil
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2102,6 +2374,10 @@ func handleFriendRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Kendinizi arkadaş olarak ekleyemezsiniz!", http.StatusBadRequest)
 		return
 	}
+	if isBlockedEither(myID, targetID) {
+		http.Error(w, "Bu isimde bir oyuncu bulunamadı!", http.StatusNotFound)
+		return
+	}
 
 	// Önceden ekli mi veya bekleyen istek var mı kontrol et
 	var existingID int
@@ -2213,6 +2489,11 @@ func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !areFriends(myID, req.FriendUserID) || isBlockedEither(myID, req.FriendUserID) {
+		http.Error(w, "Yalnızca arkadaşlarınızı davet edebilirsiniz", http.StatusForbidden)
+		return
+	}
+
 	var myName string
 	_ = db.QueryRow("SELECT username FROM users WHERE id = $1", myID).Scan(&myName)
 	if myName == "" {
@@ -2266,6 +2547,12 @@ func main() {
 	http.HandleFunc("/friends/invite", handleFriendInvite)
 	http.HandleFunc("/ugc/report", handleReportUser)
 	http.HandleFunc("/ugc/block", handleBlockUser)
+	http.HandleFunc("/ugc/unblock", handleUnblockUser)
+	http.HandleFunc("/ugc/blocks", handleListBlocks)
+	http.HandleFunc("/account/delete", handleWebAccountDeletion)
+	http.HandleFunc("/admin", handleAdminPage)
+	http.HandleFunc("/admin/queue", handleAdminQueue)
+	http.HandleFunc("/admin/action", handleAdminAction)
 	http.HandleFunc("/privacy", handlePrivacyHTML)
 	http.HandleFunc("/terms", handleTermsHTML)
 	http.HandleFunc("/leaderboard", handleLeaderboard)
@@ -2274,6 +2561,18 @@ func main() {
 
 	if !isDevelopment() && strings.TrimSpace(os.Getenv("ALLOWED_ORIGIN")) == "" {
 		log.Println("⚠️ ALLOWED_ORIGIN tanımlı değil: web sitenizden gelen WebSocket bağlantıları reddedilecek.")
+	}
+
+	if !isDevelopment() {
+		for key, warning := range map[string]string{
+			"SMTP_HOST":           "şifre sıfırlama e-postaları gönderilemez",
+			"ADMIN_TOKEN":         "moderasyon paneli kapalı kalır",
+			"LEGAL_CONTACT_EMAIL": "hukuk metinlerinde iletişim adresi görünmez",
+		} {
+			if strings.TrimSpace(os.Getenv(key)) == "" {
+				log.Printf("⚠️ %s tanımlı değil: %s.", key, warning)
+			}
+		}
 	}
 
 	port := getEnv("PORT", "8080")
@@ -2465,7 +2764,8 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceId"`
+		DeviceID      string `json:"deviceId"`
+		AcceptedTerms bool   `json:"acceptedTerms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
@@ -2481,13 +2781,21 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 	var userID int
 	var username string
 	err := db.QueryRow(`SELECT id, username FROM users WHERE guest_device_id = $1 LIMIT 1`, deviceID).Scan(&userID, &username)
+	if err == nil && isUserBanned(userID) {
+		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		return
+	}
 	if err != nil {
+		if !req.AcceptedTerms {
+			http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+			return
+		}
 		for attempt := 0; attempt < 10; attempt++ {
 			candidate := fmt.Sprintf("Misafir_%d", secureRandInt(90000)+10000)
 			randomPass, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("guest-%s-%d", deviceID, time.Now().UnixNano())), BcryptCost)
 			err = db.QueryRow(`
-				INSERT INTO users (username, password_hash, guest_device_id, is_guest)
-				VALUES ($1, $2, $3, TRUE)
+				INSERT INTO users (username, password_hash, guest_device_id, is_guest, terms_accepted_at)
+				VALUES ($1, $2, $3, TRUE, NOW())
 				RETURNING id, username
 			`, candidate, string(randomPass), deviceID).Scan(&userID, &username)
 			if err == nil {
@@ -2598,7 +2906,8 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Credential string `json:"credential"`
+		Credential    string `json:"credential"`
+		AcceptedTerms bool   `json:"acceptedTerms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Credential == "" {
 		http.Error(w, "Google kimlik bilgisi gerekli", http.StatusBadRequest)
@@ -2618,9 +2927,17 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	var userID int
 	var username string
 	err = db.QueryRow(`SELECT id, username FROM users WHERE google_id = $1 LIMIT 1`, googleID).Scan(&userID, &username)
+	if err == nil && isUserBanned(userID) {
+		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		return
+	}
 
 	// /register e-postaları doğrulanmadığı için hesaplar e-postaya göre otomatik bağlanmaz
 	if err != nil {
+		if !req.AcceptedTerms {
+			http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+			return
+		}
 		var emailTaken bool
 		if qErr := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1))`, email).Scan(&emailTaken); qErr != nil {
 			http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
@@ -2657,8 +2974,8 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 			}
 			randomPass, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("google-%s-%d", googleID, time.Now().UnixNano())), BcryptCost)
 			err = db.QueryRow(`
-				INSERT INTO users (username, password_hash, email, google_id, is_guest)
-				VALUES ($1, $2, $3, $4, FALSE)
+				INSERT INTO users (username, password_hash, email, google_id, is_guest, terms_accepted_at)
+				VALUES ($1, $2, $3, $4, FALSE, NOW())
 				RETURNING id, username
 			`, candidate, string(randomPass), email, googleID).Scan(&userID, &username)
 			if err == nil {
@@ -2728,36 +3045,37 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := map[string]interface{}{
+		"message": "Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi.",
+	}
+
 	var userID int
 	var dbEmail string
 	var isGuest bool
 	err := db.QueryRow(`SELECT id, COALESCE(email, ''), COALESCE(is_guest, FALSE) FROM users WHERE LOWER(username) = LOWER($1)`, username).
 		Scan(&userID, &dbEmail, &isGuest)
-	if err != nil || isGuest {
-		http.Error(w, "Kayıtlı kullanıcı bulunamadı", http.StatusNotFound)
-		return
+
+	if err == nil && !isGuest && dbEmail != "" && strings.EqualFold(dbEmail, email) {
+		code := fmt.Sprintf("%06d", secureRandInt(900000)+100000)
+		resetMu.Lock()
+		resetCodes[userID] = &resetCodeItem{
+			code:      code,
+			expiresAt: time.Now().Add(10 * time.Minute),
+			attempts:  0,
+		}
+		resetMu.Unlock()
+
+		if isDevelopment() {
+			resp["resetCode"] = code
+		}
+		go func() {
+			body := "Yat Dice şifre sıfırlama kodunuz: " + code + "\n\nKod 10 dakika geçerlidir. Bu isteği siz yapmadıysanız e-postayı yok sayın."
+			if err := sendEmail(dbEmail, "Yat Dice şifre sıfırlama kodu", body); err != nil {
+				log.Println("Şifre sıfırlama e-postası gönderilemedi:", err)
+			}
+		}()
 	}
 
-	if dbEmail != "" && !strings.EqualFold(dbEmail, email) {
-		http.Error(w, "Girilen e-posta adresi bu hesapla eşleşmiyor!", http.StatusForbidden)
-		return
-	}
-
-	code := fmt.Sprintf("%06d", secureRandInt(900000)+100000)
-	resetMu.Lock()
-	resetCodes[userID] = &resetCodeItem{
-		code:      code,
-		expiresAt: time.Now().Add(10 * time.Minute),
-		attempts:  0,
-	}
-	resetMu.Unlock()
-
-	resp := map[string]interface{}{
-		"message": "Şifre sıfırlama kodu oluşturuldu (10 dakika geçerli).",
-	}
-	if isDevelopment() {
-		resp["resetCode"] = code
-	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -2823,7 +3141,8 @@ func handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := db.Exec(`UPDATE users SET password_hash = $1 WHERE id = $2`, string(hashed), userID); err != nil {
+	// Şifre değişince eski oturumlar geçersiz olur
+	if _, err := db.Exec(`UPDATE users SET password_hash = $1, tokens_valid_after = date_trunc('second', NOW()) WHERE id = $2`, string(hashed), userID); err != nil {
 		http.Error(w, "Şifre güncellenemedi", http.StatusInternalServerError)
 		return
 	}
@@ -3018,6 +3337,7 @@ func handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		       p.xp, p.wins, p.high_score
 		FROM profiles p
 		JOIN users u ON u.id = p.user_id
+		WHERE COALESCE(u.is_banned, FALSE) = FALSE
 		ORDER BY p.wins DESC, p.xp DESC, p.high_score DESC
 		LIMIT 20
 	`)
@@ -3060,157 +3380,4 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"db":     dbStatus,
 		"time":   time.Now().Format(time.RFC3339),
 	})
-}
-
-// ─── 8. APP STORE & GOOGLE PLAY STORE UYUMLULUK UÇ NOKTALARI ──────────────────
-// (Apple Guideline 5.1.1(v) Hesap Silme, Guideline 1.2 UGC Raporlama/Engelleme, Gizlilik & EULA)
-
-// POST veya DELETE /profile/delete : Kullanıcının hesabını ve tüm ilişkili verilerini kalıcı olarak siler
-func handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
-	if setupCORS(&w, r) {
-		return
-	}
-	if !applySecurityAndRateLimit(w, r, true) {
-		return
-	}
-
-	uidStr, err := getUserIDFromToken(r)
-	if err != nil {
-		http.Error(w, "Yetkisiz işlem", http.StatusUnauthorized)
-		return
-	}
-	uid, _ := strconv.Atoi(uidStr)
-	if uid <= 0 {
-		http.Error(w, "Geçersiz kullanıcı", http.StatusBadRequest)
-		return
-	}
-
-	// Bekleyen davetleri ve çevrimiçi durumu temizle
-	mu.Lock()
-	delete(pendingInvites, uid)
-	mu.Unlock()
-
-	presenceMu.Lock()
-	delete(userLastSeen, uid)
-	delete(userInGame, uid)
-	presenceMu.Unlock()
-
-	// ON DELETE CASCADE ile profiles, friendships ve user_blocks otomatik silinir
-	_, _ = db.Exec(`DELETE FROM profiles WHERE user_id = $1`, uid)
-	_, _ = db.Exec(`DELETE FROM friendships WHERE requester_id = $1 OR addressee_id = $1`, uid)
-	_, _ = db.Exec(`DELETE FROM user_blocks WHERE blocker_id = $1`, uid)
-	res, err := db.Exec(`DELETE FROM users WHERE id = $1`, uid)
-	if err != nil {
-		http.Error(w, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
-		return
-	}
-	if rows, _ := res.RowsAffected(); rows == 0 {
-		http.Error(w, "Hesap bulunamadı", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"message": "Hesabınız ve tüm kişisel verileriniz kalıcı olarak silindi.",
-	})
-}
-
-// POST /ugc/report : Uygunsuz oyuncu/mesaj bildirimi (Apple Guideline 1.2 & Google Play UGC)
-func handleReportUser(w http.ResponseWriter, r *http.Request) {
-	if setupCORS(&w, r) {
-		return
-	}
-	if !applySecurityAndRateLimit(w, r, true) {
-		return
-	}
-
-	reporterID := 0
-	if uidStr, err := getUserIDFromToken(r); err == nil {
-		reporterID, _ = strconv.Atoi(uidStr)
-	}
-
-	var req struct {
-		Username string `json:"username"`
-		Reason   string `json:"reason"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
-		return
-	}
-	target := strings.TrimSpace(req.Username)
-	reason := strings.TrimSpace(req.Reason)
-	if target == "" || reason == "" {
-		http.Error(w, "Kullanıcı adı ve bildirim nedeni zorunludur", http.StatusBadRequest)
-		return
-	}
-	if len(reason) > 250 {
-		reason = reason[:250]
-	}
-
-	_, _ = db.Exec(`
-		INSERT INTO user_reports (reporter_id, reported_username, reason)
-		VALUES ($1, $2, $3)
-	`, reporterID, target, reason)
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"message": "Bildiriminiz güvenlik ekibimize iletildi. 24 saat içinde incelenecektir.",
-	})
-}
-
-// POST /ugc/block : Oyuncu engelleme (Apple Guideline 1.2 & Google Play UGC)
-func handleBlockUser(w http.ResponseWriter, r *http.Request) {
-	if setupCORS(&w, r) {
-		return
-	}
-	if !applySecurityAndRateLimit(w, r, false) {
-		return
-	}
-
-	var req struct {
-		Username string `json:"username"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
-		return
-	}
-	target := strings.TrimSpace(req.Username)
-	if target == "" {
-		http.Error(w, "Engellenecek kullanıcı adı gerekli", http.StatusBadRequest)
-		return
-	}
-
-	if uidStr, err := getUserIDFromToken(r); err == nil {
-		uid, _ := strconv.Atoi(uidStr)
-		if uid > 0 {
-			_, _ = db.Exec(`
-				INSERT INTO user_blocks (blocker_id, blocked_username)
-				VALUES ($1, $2)
-				ON CONFLICT (blocker_id, blocked_username) DO NOTHING
-			`, uid, target)
-			// Varsa arkadaşlık bağını da kaldır
-			_, _ = db.Exec(`
-				DELETE FROM friendships
-				WHERE (requester_id = $1 AND addressee_id IN (SELECT id FROM users WHERE LOWER(username) = LOWER($2)))
-				   OR (addressee_id = $1 AND requester_id IN (SELECT id FROM users WHERE LOWER(username) = LOWER($2)))
-			`, uid, target)
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"message": target + " engellendi. Bu oyuncunun mesajlarını ve davetlerini artık görmeyeceksiniz.",
-	})
-}
-
-// GET /privacy : App Store Connect & Google Play Console için resmi Gizlilik Politikası web sayfası
-func handlePrivacyHTML(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — Gizlilik Politikası (Privacy Policy)</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4AADA6}a{color:#c9a84c}</style></head><body><h1>Yat Dice — Gizlilik Politikası (Privacy Policy)</h1><p><strong>Son Güncelleme:</strong> Kasım 2026</p><h2>1. Toplanan Veriler</h2><p>Yat Dice, yalnızca oyun deneyimini sağlamak amacıyla kullanıcı adı, isteğe bağlı e-posta adresi (şifre sıfırlama ve Google ile giriş için), ülke bayrağı tercihi, profil avatarı ve oyun içi istatistikleri (XP, sanal jeton, galibiyet sayısı) saklar. Üçüncü taraf reklam takipçileri (IDFA/GAID) kullanılmaz ve kişisel verileriniz hiçbir üçüncü tarafla satılmaz veya paylaşılmaz.</p><h2>2. Sanal Öğeler ve Kumar Yasağı Beyanı</h2><p>Oyun içindeki tüm Jetonlar (🪙) ve Kasalar (📦) tamamen eğlence amaçlı sanal oyun içi puandır. Gerçek parayla satın alınamaz, gerçek paraya, mala veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</p><h2>3. Kullanıcı Tarafından Oluşturulan İçerik (UGC) ve Güvenlik</h2><p>Oyun içi sohbet otomatik küfür filtresiyle korunmaktadır. Kullanıcılar uygunsuz davranışları oyun içindeki <strong>Raporla (Report)</strong> ve <strong>Engelle (Block)</strong> butonlarıyla anında bildirebilir ve engelleyebilir.</p><h2>4. Hesap ve Veri Silme (Account Deletion)</h2><p>Kullanıcılar diledikleri zaman uygulama içerisindeki <strong>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</strong> butonuna tıklayarak hesaplarını ve ilişkili tüm verilerini sunucularımızdan anında ve geri döndürülemez biçimde silebilirler.</p></body></html>`))
-}
-
-// GET /terms : App Store Connect & Google Play Console için Kullanım Koşulları (EULA) web sayfası
-func handleTermsHTML(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — Kullanım Koşulları (Terms of Use / EULA)</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4AADA6}</style></head><body><h1>Yat Dice — Kullanım Koşulları (EULA) ve Topluluk Kuralları</h1><p><strong>Son Güncelleme:</strong> Kasım 2026</p><h2>1. Sıfır Toleranslı Topluluk Kuralları (UGC Policy)</h2><p>Yat Dice, tüm oyuncular için güvenli ve saygılı bir ortam sunar. Hakaret, küfür, nefret söylemi, taciz veya hile girişimlerine karşı sıfır tolerans politikası uygulanır. Bildirilen içerikler 24 saat içinde incelenir ve ihlal yapan hesaplar kalıcı olarak kapatılır.</p><h2>2. Sanal Jetonlar ve Kasa Olasılıkları (Loot Box Disclosure)</h2><p>Oyun içi Jetonlar (🪙) ve Kasalar (📦) gerçek para değeri taşımaz. Açılan her Kasa (📦), %100 olasılıkla 50 ile 199 arasında eşit dağılımlı (Uniform Distribution: 50–99 Jeton %33.3, 100–149 Jeton %33.3, 150–199 Jeton %33.4) sanal oyun içi jeton kazandırır.</p></body></html>`))
 }
