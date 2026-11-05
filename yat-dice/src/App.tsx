@@ -23,54 +23,136 @@ function getAudioCtx(): AudioContext | null {
 }
 
 const sfx = {
+  // Gerçekçi 3D Zar Atma Sesi (Bandpass Filtreli Darbe Gürültüsü + Ahşap/Fildişi Rezonansı)
   roll() {
     const ctx = getAudioCtx();
     if (!ctx) return;
-    [0, 0.08, 0.16, 0.25, 0.35].forEach((delay, idx) => {
+    const bounces = [0, 0.065, 0.13, 0.20, 0.28, 0.38, 0.50];
+    bounces.forEach((delay, idx) => {
+      const t0 = ctx.currentTime + delay;
+      const vol = Math.max(0.03, 0.13 - idx * 0.014);
+
+      // 1) Kısa darbe gürültüsü (Zarların birbirine ve masaya çarpması)
+      const bufSize = Math.floor(ctx.sampleRate * 0.045);
+      const noiseBuf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.28));
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuf;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(950 + idx * 140 + Math.random() * 250, t0);
+      filter.Q.setValueAtTime(3.2, t0);
+
+      const nGain = ctx.createGain();
+      nGain.gain.setValueAtTime(vol, t0);
+      nGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.045);
+
+      noise.connect(filter);
+      filter.connect(nGain);
+      nGain.connect(ctx.destination);
+      noise.start(t0);
+
+      // 2) Gövde tınısı (Kemik/Ahşap zar tıkırtısı)
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const oGain = ctx.createGain();
       osc.type = "triangle";
-      osc.frequency.setValueAtTime(190 + idx * 45 + Math.random() * 50, ctx.currentTime + delay);
-      gain.gain.setValueAtTime(0.08, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.06);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.065);
+      osc.frequency.setValueAtTime(240 + idx * 35 + Math.random() * 60, t0);
+      osc.frequency.exponentialRampToValueAtTime(110, t0 + 0.04);
+      oGain.gain.setValueAtTime(vol * 0.65, t0);
+      oGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.042);
+      osc.connect(oGain);
+      oGain.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.045);
     });
   },
-  lock() {
+  // Zar Kilitleme / Kilit Açma Sesi
+  lock(locked = true) {
     const ctx = getAudioCtx();
     if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(520, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(740, ctx.currentTime + 0.05);
-    gain.gain.setValueAtTime(0.07, ctx.currentTime);
+    osc.frequency.setValueAtTime(locked ? 520 : 680, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(locked ? 780 : 440, ctx.currentTime + 0.055);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + 0.065);
   },
+  // Puan Yazma & 50 Puan YAT Fanfarı
   score(pts: number) {
     const ctx = getAudioCtx();
     if (!ctx) return;
-    const notes = pts >= 50 ? [523.25, 659.25, 783.99, 1046.5] : pts > 0 ? [440, 587.33] : [220, 180];
+    const notes = pts >= 50 ? [523.25, 659.25, 783.99, 1046.5, 1318.5] : pts > 0 ? [440, 554.37, 659.25] : [220, 174.61];
     notes.forEach((freq, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.07);
-      gain.gain.setValueAtTime(0.09, ctx.currentTime + i * 0.07);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.07 + 0.16);
+      osc.type = pts >= 50 ? "triangle" : "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.065);
+      gain.gain.setValueAtTime(0.095, ctx.currentTime + i * 0.065);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.065 + 0.18);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + i * 0.07);
-      osc.stop(ctx.currentTime + i * 0.07 + 0.17);
+      osc.start(ctx.currentTime + i * 0.065);
+      osc.stop(ctx.currentTime + i * 0.065 + 0.19);
     });
   },
+  // Kasa Sallanma Efekt Sesi
+  caseShake() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    [0, 0.18, 0.36, 0.54, 0.72, 0.90, 1.08, 1.26].forEach((d, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(180 + i * 30, ctx.currentTime + d);
+      gain.gain.setValueAtTime(0.07, ctx.currentTime + d);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + d);
+      osc.stop(ctx.currentTime + d + 0.09);
+    });
+  },
+  // Son 5 Saniye Süre Uyarı Tıkırtısı
+  tick() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.04, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.035);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.04);
+  },
+  // Sohbet / Bildirim / Eşleşme Bulundu Sesi
+  pop() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.07, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.095);
+  },
+  // Galibiyet & Ödül Fanfarı
   win() {
     const ctx = getAudioCtx();
     if (!ctx) return;
@@ -79,12 +161,12 @@ const sfx = {
       const gain = ctx.createGain();
       osc.type = "triangle";
       osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.09);
-      gain.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.09);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.09 + 0.22);
+      gain.gain.setValueAtTime(0.11, ctx.currentTime + i * 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.09 + 0.24);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(ctx.currentTime + i * 0.09);
-      osc.stop(ctx.currentTime + i * 0.09 + 0.24);
+      osc.stop(ctx.currentTime + i * 0.09 + 0.25);
     });
   },
 };
@@ -1236,6 +1318,7 @@ function HomeScreen({
 
   const openCase = async () => {
     if (profile.cases <= 0 || caseAnim) return;
+    sfx.caseShake();
 
     if (token && !token.startsWith("guest_token_")) {
       try {
@@ -1247,6 +1330,7 @@ function HomeScreen({
         const data = await res.json();
         setCaseAnim({ status: "shaking", reward: data.reward });
         setTimeout(() => {
+          sfx.win();
           setCaseAnim(prev => prev ? { ...prev, status: "revealed" } : null);
           setProfile(prev => ({
             ...prev,
@@ -1261,6 +1345,7 @@ function HomeScreen({
       const reward = Math.floor(Math.random() * 150) + 50;
       setCaseAnim({ status: "shaking", reward });
       setTimeout(() => {
+        sfx.win();
         setCaseAnim(prev => prev ? { ...prev, status: "revealed" } : null);
         setProfile(prev => ({
           ...prev,
@@ -1874,6 +1959,7 @@ function ShopScreen({
   };
 
   const roll = () => {
+    sfx.roll();
     setRolling(true);
     const newVals = Array.from({length:3},()=>(Math.floor(Math.random()*6)+1) as DieVal);
     const newStates = newVals.map((v,i)=>{
@@ -1887,6 +1973,7 @@ function ShopScreen({
 
   const rollPreview = () => {
     if (previewRolling) return;
+    sfx.roll();
     setPreviewRolling(true);
     const v = (Math.floor(Math.random() * 6) + 1) as DieVal;
     const t = targetRot(v, previewState.rx, previewState.ry);
@@ -2211,8 +2298,16 @@ function GameScreen({
   const [chatCooldown, setChatCooldown] = useState(false);
   const [spamWarn, setSpamWarn] = useState<string | null>(null);
   const [opponentMuted, setOpponentMuted] = useState(false);
+  const [gameSoundOn, setGameSoundOn] = useState(() => localStorage.getItem("yatzy_sound") !== "off");
   const opponentMutedRef = React.useRef(false);
   const chatOpenRef = React.useRef(false);
+
+  const toggleGameSound = () => {
+    const next = !gameSoundOn;
+    setGameSoundOn(next);
+    localStorage.setItem("yatzy_sound", next ? "on" : "off");
+    if (next) sfx.lock(true);
+  };
 
   const toggleMuteBlockOpponent = async () => {
     const next = !opponentMuted;
@@ -2282,14 +2377,20 @@ function GameScreen({
   const myBonus = myPlayerIndex === 1 ? p1Bonus : p2Bonus;
   const oppBonus = myPlayerIndex === 1 ? p2Bonus : p1Bonus;
 
-  // 30 Saniyelik Görsel Tur Sayacı
+  // 30 Saniyelik Görsel Tur Sayacı + Son 5 Saniye Uyarı Sesi
   useEffect(() => {
     if (opponentLeft) return;
     const interval = setInterval(() => {
-      setTurnTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+      setTurnTimeLeft(prev => {
+        const next = prev > 0 ? prev - 1 : 0;
+        if (next > 0 && next <= 5 && isMyTurn) {
+          sfx.tick();
+        }
+        return next;
+      });
     }, 1000);
     return () => clearInterval(interval);
-  }, [opponentLeft]);
+  }, [opponentLeft, isMyTurn]);
 
   const handleLeave = () => setShowLeaveConfirm(true);
 
@@ -2305,6 +2406,7 @@ function GameScreen({
       const data = JSON.parse(event.data);
       
       if (data.type === "DICE_ROLLED") {
+        if (!isMyTurn) sfx.roll();
         const syncedLocked: boolean[] = data.locked || [false,false,false,false,false];
         setLocked(syncedLocked);
         setRolling(true);
@@ -2326,12 +2428,14 @@ function GameScreen({
       }
       else if (data.type === "EMOJI") {
         if (opponentMutedRef.current && data.sender !== myPlayerId) return;
+        sfx.pop();
         const id = ++emojiIdRef.current;
         setFloatingEmoji({ emoji: data.emoji, fromMe: data.sender === myPlayerId, id });
         setTimeout(() => setFloatingEmoji(prev => prev?.id === id ? null : prev), 2200);
       }
       else if (data.type === "CHAT") {
         if (opponentMutedRef.current && data.sender !== myPlayerId) return;
+        sfx.pop();
         const newMsg = {
           sender: data.sender || "p2",
           senderName: data.senderName || "Oyuncu",
@@ -2458,9 +2562,9 @@ function GameScreen({
 
   const toggleLock = (i:number) => {
     if (rollsLeft===3 || rolling || !isMyTurn || !ws) return;
-    sfx.lock();
     const newLocked = [...locked];
     newLocked[i] = !newLocked[i];
+    sfx.lock(newLocked[i]);
     setLocked(newLocked);
     ws.send(JSON.stringify({ type: "TOGGLE_LOCK", locked: newLocked }));
   };
@@ -2524,6 +2628,16 @@ function GameScreen({
                {em}
              </button>
            ))}
+           <button
+             onClick={toggleGameSound}
+             title={gameSoundOn ? "Sesi Kapat" : "Sesi Aç"}
+             style={{
+               background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8,
+               padding: "3px 7px", cursor: "pointer", fontSize: 12
+             }}
+           >
+             {gameSoundOn ? "🔊" : "🔇"}
+           </button>
            <button
              onClick={() => setChatOpen(true)}
              style={{
@@ -4028,6 +4142,7 @@ export default function App() {
         }
       }
       else if (data.type === "MATCH_FOUND") {
+        sfx.pop();
         const matchBet = typeof data.betAmount === "number" ? data.betAmount : effectiveBet;
         setActiveBet(matchBet);
         if (matchBet > 0) {
