@@ -52,3 +52,8 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Mobil imzalama anahtarları (ASLA PUSH EDİLMEMELİ)
+*.jks
+*.keystore
+*.p8

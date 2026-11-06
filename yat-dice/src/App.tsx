@@ -6,6 +6,10 @@ import {
   RotateCcw, Crown, Check, Lock,
   Home, TrendingUp, Edit3, X, ChevronLeft
 } from "lucide-react";
+import {
+  APPLE_AVAILABLE, GOOGLE_AVAILABLE, IS_NATIVE, haptic, minimizeApp, nativeAppleLogin, nativeGoogleLogin,
+  openExternal, registerNativeHandlers
+} from "./native";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
 const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
@@ -802,9 +806,9 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
                 <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)</p>
                 Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı <b>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</b> menüsünden silebilirsiniz.
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
-                  <a href={`${API_BASE}/privacy`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Gizlilik Politikası</a>
-                  <a href={`${API_BASE}/terms`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Kullanım Koşulları</a>
-                  <a href={`${API_BASE}/account/delete`} target="_blank" rel="noreferrer" style={{ color: c.accent }}>Web'den Hesap Silme</a>
+                  <ExternalLink path="/privacy" color={c.accent}>Gizlilik Politikası</ExternalLink>
+                  <ExternalLink path="/terms" color={c.accent}>Kullanım Koşulları</ExternalLink>
+                  <ExternalLink path="/account/delete" color={c.accent}>Web'den Hesap Silme</ExternalLink>
                 </div>
               </div>
             </div>
@@ -885,6 +889,18 @@ type ResumeState = {
 };
 type ResumedMatch = { playerIndex: number; opponentName: string; betAmount: number; state: ResumeState };
 type BlockedUser = { userId: number; username: string };
+
+function ExternalLink({ path, color, children }: { path: string; color: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={`${API_BASE}${path}`}
+      onClick={event => { event.preventDefault(); openExternal(`${API_BASE}${path}`); }}
+      style={{ color }}
+    >
+      {children}
+    </a>
+  );
+}
 
 const TERMS_REQUIRED_TEXT = "Devam etmek için kutuyu işaretleyerek koşulları kabul etmelisiniz.";
 
@@ -1006,18 +1022,19 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
     }
   };
 
-  const handleGoogleCredential = async (credential: string) => {
+  const socialLogin = async (endpoint: string, getBody: () => Promise<Record<string, unknown>>) => {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/google`, {
+      const body = await getBody();
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential, acceptedTerms })
+        body: JSON.stringify({ ...body, acceptedTerms })
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Google girişi başarısız");
+        throw new Error(txt || "Giriş başarısız");
       }
       const data = await res.json();
       onLogin(data.username, data.token);
@@ -1027,6 +1044,10 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
       setLoading(false);
     }
   };
+
+  const handleGoogleCredential = (credential: string) => socialLogin("/auth/google", async () => ({ credential }));
+  const handleNativeGoogle = () => socialLogin("/auth/google", async () => ({ credential: await nativeGoogleLogin() }));
+  const handleNativeApple = () => socialLogin("/auth/apple", nativeAppleLogin);
 
   return (
     <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:APP_FONT }}>
@@ -1112,12 +1133,33 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
             <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:11, lineHeight:1.4, color:c.textSub, cursor:"pointer" }}>
               <input type="checkbox" checked={acceptedTerms} onChange={e => updateAcceptedTerms(e.target.checked)} style={{ marginTop:1, accentColor:c.accent }} />
               <span>
-                13 yaşından büyüğüm; <a href={`${API_BASE}/terms`} target="_blank" rel="noreferrer" style={{ color:c.accent }}>Kullanım Koşulları</a>'nı ve <a href={`${API_BASE}/privacy`} target="_blank" rel="noreferrer" style={{ color:c.accent }}>Gizlilik Politikası</a>'nı kabul ediyorum.
+                13 yaşından büyüğüm; <ExternalLink path="/terms" color={c.accent}>Kullanım Koşulları</ExternalLink>'nı ve <ExternalLink path="/privacy" color={c.accent}>Gizlilik Politikası</ExternalLink>'nı kabul ediyorum.
               </span>
             </label>
 
-            {GOOGLE_CLIENT_ID && acceptedTerms && (
+            {!IS_NATIVE && GOOGLE_CLIENT_ID && acceptedTerms && (
               <GoogleSignInButton dark={dark} onCredential={handleGoogleCredential} onError={setError} />
+            )}
+
+            {IS_NATIVE && GOOGLE_AVAILABLE && acceptedTerms && (
+              <button type="button" onClick={handleNativeGoogle} style={{ padding:"13px", borderRadius:12, background:"#fff", color:"#1f232b", border:`1px solid ${c.border}`, fontWeight:800, fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                </svg>
+                Google ile Devam Et
+              </button>
+            )}
+
+            {APPLE_AVAILABLE && acceptedTerms && (
+              <button type="button" onClick={handleNativeApple} style={{ padding:"13px", borderRadius:12, background:"#000", color:"#fff", border:"1px solid #333", fontWeight:800, fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+                  <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
+                </svg>
+                Apple ile Devam Et
+              </button>
             )}
 
             <button type="button" onClick={handleGuestLogin} style={{ padding:"13px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:13, cursor:"pointer" }}>
@@ -2657,6 +2699,7 @@ function GameScreen({
   const doRoll = () => {
     if (!isMyTurn || rollsLeft===0 || rolling || !ws || reconnecting) return; 
     sfx.roll();
+    haptic("medium");
     setRolling(true);
     sendGame({ type: "ROLL_DICE", locked: locked });
   };
@@ -2667,6 +2710,7 @@ function GameScreen({
     newLocked[i] = !newLocked[i];
     sfx.lock(newLocked[i]);
     setLocked(newLocked);
+    haptic();
     sendGame({ type: "TOGGLE_LOCK", locked: newLocked });
   };
 
@@ -2674,6 +2718,7 @@ function GameScreen({
     if (!isMyTurn || rolling || rollsLeft===3 || !ws) return;
     if (myScores[key] != null) return;
     // Puanı sunucu hesaplayıp her iki oyuncuya SCORE_SELECTED olarak yayınlar
+    haptic("medium");
     sendGame({ type: "SCORE_SELECTED", key: key });
   };
 
@@ -4365,6 +4410,23 @@ export default function App() {
   };
 
   useEffect(() => { reconnectRef.current = reconnectToMatch; });
+
+  const wsRef = useRef(ws);
+  useEffect(() => { wsRef.current = ws; }, [ws]);
+
+  useEffect(() => registerNativeHandlers(
+    () => {
+      const current = screenRef.current;
+      if (current === "game") return; // Maçtan yalnızca TERK ET ile çıkılır
+      if (current === "home" || current === "auth") minimizeApp();
+      else setScreen("home");
+    },
+    () => {
+      if (screenRef.current === "game" && wsRef.current?.readyState !== WebSocket.OPEN) {
+        reconnectRef.current();
+      }
+    }
+  ), []);
 
   const connectToServer = (action: "QUICK_MATCH" | "BOT_MATCH" | "CREATE_ROOM" | "JOIN_ROOM", roomCode?: string, autoInviteFriendId?: number, betOverride?: BetOption) => {
     if (isSearching || !token) return;

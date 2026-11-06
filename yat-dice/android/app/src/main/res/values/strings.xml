@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Yat Dice</string>
+    <string name="title_activity_main">Yat Dice</string>
+    <string name="package_name">com.sutkucanverdi.yatdice</string>
+    <string name="custom_url_scheme">com.sutkucanverdi.yatdice</string>
+</resources>

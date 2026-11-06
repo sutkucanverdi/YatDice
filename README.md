@@ -39,7 +39,7 @@
 
 ## 📱 App Store & Google Play Store Uyumluluk (Compliance) Özellikleri
 
-Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Uygulama henüz mağazaya gönderilmeye hazır değildir; yerel Android/iOS projesi, mobilde Google girişi ve Sign in with Apple eksiktir:
+Aşağıdaki özellikler mağaza başvurusu için hazırlanmıştır. Başvurudan önce gerçek cihaz testleri, Google ve Apple giriş kimlikleri, imzalı build ve mağaza formları tamamlanmalıdır:
 
 1. **Uygulama İçi Kalıcı Hesap ve Veri Silme (Apple Guideline 5.1.1(v) & Google Play Data Safety):**
    - Kullanıcılar **Anasayfa &rarr; Profili Özelleştir &rarr; 🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil** adımıyla (`POST /profile/delete`) veya uygulamayı kaldırdıysa `/account/delete` web sayfasından hesabını silebilir.
@@ -146,11 +146,33 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `ALLOWED_ORIGIN` | CORS ve WebSocket izin verilen origin (`*` veya domain) | `*` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Şifre sıfırlama e-postası için SMTP (STARTTLS, 587) | *(Boşsa e-posta gönderilmez)* |
 | `REPORT_NOTIFY_EMAIL` | Yeni şikâyet bildirim adresi | *(İsteğe bağlı)* |
+| `APPLE_CLIENT_IDS` | Sign in with Apple için bundle id listesi | *(Boşsa Apple girişi kapalı)* |
+| `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Hesap silinince Apple yetkisini geri almak için | *(Apple girişi açıksa gerekli)* |
 | `ADMIN_TOKEN` | `/admin` paneli anahtarı, en az 32 karakter | *(Boşsa panel kapalı)* |
 | `LEGAL_OWNER_NAME`, `LEGAL_CONTACT_EMAIL` | Hukuk metinlerindeki sahip ve iletişim bilgisi | *(Üretimde gerekli)* |
 | `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | `http://localhost:8080` |
 | `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | `ws://localhost:8080` |
-| `VITE_GOOGLE_CLIENT_ID` | Web Google giriş butonu için istemci kimliği | *(Boşsa buton gizli)* |
+| `VITE_GOOGLE_CLIENT_ID` | Web ve Android Google girişi için web istemci kimliği | *(Boşsa buton gizli)* |
+| `VITE_GOOGLE_IOS_CLIENT_ID` | iOS Google girişi için istemci kimliği | *(Boşsa iOS'ta buton gizli)* |
+
+---
+
+## 📱 Mobil Uygulama (Capacitor)
+
+Android ve iOS projeleri `yat-dice/android` ve `yat-dice/ios` klasörlerindedir. Uygulama kimliği `com.sutkucanverdi.yatdice` olup mağazada yayınlandıktan sonra değiştirilemez.
+
+Yayın build'i için `yat-dice/.env` dosyasında HTTPS adresleri tanımlayın, ardından web dosyalarını yerel projelere kopyalayın:
+
+```bash
+cd yat-dice
+npm run build
+npx cap sync
+```
+
+- **Android:** `npx cap open android` ile Android Studio'yu açın. Yayın için **Build > Generate Signed App Bundle** kullanın. Anahtar dosyanızı kaybetmeyin ve repoya eklemeyin.
+- **iOS:** Mac üzerinde `npx cap open ios` ile Xcode'u açın. **Signing & Capabilities** bölümüne **Sign in with Apple** ekleyin. Google girişi için `Info.plist` içine ters çevrilmiş iOS istemci kimliğini URL scheme olarak ekleyin.
+- **Sunucu:** `ALLOWED_ORIGIN` değerine web adresinizle birlikte `capacitor://localhost,https://localhost` ekleyin. `GOOGLE_CLIENT_ID` web ve iOS kimliklerini, `APPLE_CLIENT_IDS` ise bundle id'yi içermelidir.
+- **Yerel HTTP testi:** Yalnızca geliştirme için `CAP_DEV_HTTP=1 npx cap sync android` kullanın; mağaza build'inde kullanmayın.
 
 ---
 
@@ -162,6 +184,7 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `POST` | `/register` & `/login` | Kullanıcı kaydı (küfür filtreli) ve brute-force korumalı JWT giriş |
 | `POST` | `/auth/guest` | Cihaz kimliği (`deviceId`) ile kalıcı misafir hesabı oluşturma/giriş |
 | `POST` | `/auth/google` | Google hesabıyla kayıt ve giriş |
+| `POST` | `/auth/apple` | Sign in with Apple ile kayıt ve giriş |
 | `POST` | `/auth/forgot-password` & `/auth/reset-password` | 6 haneli kod ile güvenli şifre sıfırlama |
 | `GET` | `/profile` | Kullanıcının güncel profil, istatistik, görev ve zar koleksiyonu |
 | `POST` | `/profile/update` | Kullanıcı adı, profil fotoğrafı/avatar, ülke bayrağı ve seçili zar güncelleme |

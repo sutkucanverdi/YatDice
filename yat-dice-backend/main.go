@@ -1715,6 +1715,9 @@ func createTables() {
 			status VARCHAR(20) DEFAULT 'open',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_id VARCHAR(255) DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT DEFAULT '';`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_apple_id_unique ON users (apple_id) WHERE apple_id <> '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (LOWER(username));`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique ON users (google_id) WHERE google_id <> '';`,
 	}
@@ -2532,6 +2535,7 @@ func main() {
 	http.HandleFunc("/login", handleLogin)
 	http.HandleFunc("/auth/guest", handleGuestAuth)
 	http.HandleFunc("/auth/google", handleGoogleAuth)
+	http.HandleFunc("/auth/apple", handleAppleAuth)
 	http.HandleFunc("/auth/forgot-password", handleForgotPassword)
 	http.HandleFunc("/auth/reset-password", handleResetPassword)
 	http.HandleFunc("/profile", handleGetProfile)
@@ -2950,47 +2954,11 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		baseName := displayName
-		if baseName == "" {
-			baseName = strings.Split(email, "@")[0]
-		}
-		baseName = strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
-				return r
-			}
-			return -1
-		}, baseName)
-		if len(baseName) < 3 || isForbiddenUsername(baseName) {
-			baseName = "Oyuncu"
-		}
-		if len(baseName) > 18 {
-			baseName = baseName[:18]
-		}
-
-		for i := 0; i < 10; i++ {
-			candidate := baseName
-			if i > 0 {
-				candidate = fmt.Sprintf("%s%d", baseName, secureRandInt(900)+100)
-			}
-			randomPass, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("google-%s-%d", googleID, time.Now().UnixNano())), BcryptCost)
-			err = db.QueryRow(`
-				INSERT INTO users (username, password_hash, email, google_id, is_guest, terms_accepted_at)
-				VALUES ($1, $2, $3, $4, FALSE, NOW())
-				RETURNING id, username
-			`, candidate, string(randomPass), email, googleID).Scan(&userID, &username)
-			if err == nil {
-				break
-			}
-		}
-		if userID == 0 {
+		userID, username, err = createProviderUser("google_id", googleID, email, displayName)
+		if err != nil {
 			http.Error(w, "Google hesabı oluşturulamadı", http.StatusInternalServerError)
 			return
 		}
-		_, _ = db.Exec(`
-			INSERT INTO profiles (user_id, xp, tokens, cases, unlocked_dice, selected_dice)
-			VALUES ($1, 150, 300, 2, 'ivory', 'ivory')
-			ON CONFLICT (user_id) DO NOTHING
-		`, userID)
 	}
 
 	tokenString, err := issueJWTForUser(userID, 30)

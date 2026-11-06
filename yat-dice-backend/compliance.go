@@ -362,6 +362,10 @@ func deleteUserData(userID int) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var appleRefreshToken string
+	if err := tx.QueryRow(`SELECT COALESCE(apple_refresh_token, '') FROM users WHERE id = $1`, userID).Scan(&appleRefreshToken); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE user_reports SET reporter_id = 0 WHERE reporter_id = $1`, userID); err != nil {
 		return err
 	}
@@ -378,6 +382,11 @@ func deleteUserData(userID int) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	go func() {
+		if err := revokeAppleToken(appleRefreshToken); err != nil {
+			log.Println("Apple yetkisi geri alınamadı:", err)
+		}
+	}()
 
 	mu.Lock()
 	delete(pendingInvites, userID)
@@ -738,14 +747,14 @@ func handleTermsHTML(w http.ResponseWriter, r *http.Request) {
 const privacyPolicyHTML = `<p><strong>Son güncelleme:</strong> Kasım 2026</p>
 <h2>1. Veri Sorumlusu</h2><p>{{CONTACT}}</p>
 <h2>2. İşlenen Veriler</h2><ul>
-<li><strong>Hesap:</strong> kullanıcı adı, şifre özeti, varsa e-posta adresi ve Google hesap kimliği.</li>
+<li><strong>Hesap:</strong> kullanıcı adı, şifre özeti, varsa e-posta adresi, Google veya Apple hesap kimliği.</li>
 <li><strong>Misafir hesap:</strong> uygulamanın ürettiği rastgele cihaz kimliği. Reklam kimliği kullanılmaz.</li>
 <li><strong>Profil ve oyun:</strong> profil fotoğrafı veya avatar, ülke tercihi, XP, jeton, kasa, istatistikler, görevler ve zar koleksiyonu.</li>
 <li><strong>Sosyal veriler:</strong> arkadaşlıklar, oyun davetleri, engeller ve şikâyet kayıtları.</li>
 <li><strong>Sohbet:</strong> mesajlar kalıcı olarak kaydedilmez. Şikâyet incelemesi için son mesajlar en fazla 30 dakika bellekte tutulur; şikâyet edilirse şikâyet edilen oyuncunun bu mesajları şikâyet kaydına eklenir.</li>
 <li><strong>Teknik veriler:</strong> IP adresi güvenlik ve hız sınırlaması için işlenir; barındırma sağlayıcısının sistem kayıtlarında geçici olarak bulunabilir.</li></ul>
 <h2>3. Amaçlar ve Hukuki Sebepler</h2><p>Veriler hesabı ve oyunu sunmak, eşleştirme ve sosyal özellikleri çalıştırmak, şifre kurtarmak, kötüye kullanımı önlemek ve yasal yükümlülükleri yerine getirmek için işlenir. Hukuki sebepler sözleşmenin ifası, meşru menfaat ve gerektiğinde açık rızadır.</p>
-<h2>4. Paylaşım</h2><p>Veriler satılmaz ve reklam amacıyla paylaşılmaz. Hizmet için gerekli ölçüde barındırma ve veritabanı sağlayıcıları, e-posta gönderim sağlayıcısı ve Google ile giriş kullanılıyorsa Google ile paylaşılabilir. Bu sağlayıcılar yurt dışında bulunabilir. Kullanıcı adı, avatar, ülke ve oyun istatistikleri diğer oyunculara görünür.</p>
+<h2>4. Paylaşım</h2><p>Veriler satılmaz ve reklam amacıyla paylaşılmaz. Hizmet için gerekli ölçüde barındırma ve veritabanı sağlayıcıları, e-posta gönderim sağlayıcısı ve kullandığınız giriş yöntemine göre Google veya Apple ile paylaşılabilir. Bu sağlayıcılar yurt dışında bulunabilir. Kullanıcı adı, avatar, ülke ve oyun istatistikleri diğer oyunculara görünür.</p>
 <h2>5. Saklama Süreleri</h2><p>Hesap verileri hesap silinene kadar saklanır. Çözülmemiş şikâyetler çözülene kadar, çözülen şikâyetler en fazla 90 gün saklanır. Kapatılan hesapların kötüye kullanımın tekrarını önlemek için gerekli kayıtları saklanabilir.</p>
 <h2>6. Haklarınız</h2><p>KVKK ve GDPR kapsamında verilerinize erişme, düzeltme, silme, işlemeyi kısıtlama, itiraz etme ve veri taşınabilirliği haklarına sahip olabilirsiniz. Başvurularınızı aşağıdaki iletişim adresine iletebilir, yetkili veri koruma kurumuna şikâyette bulunabilirsiniz.</p>
 <h2>7. Hesap Silme</h2><p>Uygulamada <strong>Profili Özelleştir → Hesabımı ve Verilerimi Kalıcı Olarak Sil</strong> adımını veya <a href="/account/delete">web'den hesap silme sayfasını</a> kullanabilirsiniz.</p>
