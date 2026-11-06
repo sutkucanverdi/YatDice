@@ -2340,6 +2340,18 @@ function ShopScreen({
 
 
 // ─── Screen 3: Game (Server-Authoritative + Turn Timer + Emojis + Wager) ─────
+const LOCK_SLOT_FIRST_Y = 30;
+const LOCK_SLOT_GAP = 40;
+const DIE_ROLL_TRANSITION = "left 0.55s cubic-bezier(0.22, 1, 0.36, 1), top 0.55s cubic-bezier(0.22, 1, 0.36, 1)";
+const DIE_LOCK_TRANSITION = "left 0.32s cubic-bezier(0.4, 0, 0.2, 1), top 0.32s cubic-bezier(0.4, 0, 0.2, 1)";
+
+// Kilit sırasını korur: açılan zarlar çıkar, yeni kilitlenenler sona eklenir
+function mergeLockOrder(order: number[], locked: boolean[]): number[] {
+  const kept = order.filter(index => locked[index]);
+  const added = locked.flatMap((isLocked, index) => (isLocked && !kept.includes(index) ? [index] : []));
+  return [...kept, ...added];
+}
+
 // Puan satırları içerikten bağımsızdır; önizleme sayıları tabloyu büyütüp tepsiyi itmez
 const SCORE_ROW_HEIGHT = "clamp(22px, 3.3dvh, 28px)";
 
@@ -2363,6 +2375,9 @@ function GameScreen({
     return ([3,1,5,2,4] as DieVal[]).map((v,i)=>({ ...initDie(v,i), px:pos[i].x, py:pos[i].y }));
   });
   const [locked, setLocked] = useState([false,false,false,false,false]);
+  const [lockOrder, setLockOrder] = useState<number[]>([]);
+  const nextLockOrder = mergeLockOrder(lockOrder, locked);
+  if (nextLockOrder.join() !== lockOrder.join()) setLockOrder(nextLockOrder);
   const [rollsLeft, setRollsLeft] = useState(3);
   const [rolling, setRolling] = useState(false);
   const [opponentLeft, setOpponentLeft] = useState(false);
@@ -2925,7 +2940,7 @@ function GameScreen({
       </AnimatePresence>
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "15px", gap: 15 }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 360, height: 220, alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", width: "100%", maxWidth: 360, height: 220, alignItems: "center", justifyContent: "space-between", position: "relative" }}>
            <div style={{ width: 44, height: 220, flexShrink: 0 }}></div>
 
            {/* Yuvarlak Zar Tepsisi */}
@@ -2938,22 +2953,35 @@ function GameScreen({
               overflow: "hidden", transform: "translateZ(0)",
            }}>
               <div style={{ position:"absolute", inset:0, borderRadius:"50%", opacity:0.4, backgroundImage:`repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px)` }}/>
-              <div style={{ position: "absolute", inset: 0, zIndex: 2 }}>
-                {dieStates.map((s, i) => !locked[i] && (
-                   <Die3D
-                     key={`tray-die-${i}`} index={i} state={s} size={32}
-                     locked={false} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={rolling} isIdle={rollsLeft === 3 && !rolling}
-                     style={{
-                       position: "absolute",
-                       left: "50%", top: "50%",
-                       marginLeft: -16, marginTop: -16,
-                       transform: `translate3d(${s.px}px, ${s.py}px, 0)`,
-                       transition: "transform 0.55s cubic-bezier(0.22, 1, 0.36, 1)",
-                     }}
-                   />
-                ))}
-              </div>
+           </div>
 
+           <div style={{ width: 44, height: 220, flexShrink: 0 }}></div>
+
+           {/* Beş zar tek katmanda: tepsi ile kilit sütunu arasında animasyonla geçer */}
+           <div style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none" }}>
+             {dieStates.map((s, i) => {
+               const slot = lockOrder.indexOf(i);
+               const isLocked = slot >= 0;
+               const moveTransition = rolling ? DIE_ROLL_TRANSITION : DIE_LOCK_TRANSITION;
+               return (
+                 <Die3D
+                   key={`die-${i}`} index={i} state={s} size={32}
+                   locked={isLocked} mat={diceMat} onClick={()=>toggleLock(i)}
+                   isRolling={rolling && !isLocked} isIdle={!isLocked && rollsLeft === 3 && !rolling}
+                   style={{
+                     position: "absolute",
+                     left: isLocked ? "calc(100% - 22px)" : `calc(50% + ${s.px}px)`,
+                     top: isLocked ? LOCK_SLOT_FIRST_Y + slot * LOCK_SLOT_GAP : `calc(50% + ${s.py}px)`,
+                     marginLeft: -16, marginTop: -16,
+                     pointerEvents: "auto",
+                     transition: moveTransition,
+                   }}
+                 />
+               );
+             })}
+           </div>
+
+           <div style={{ position: "absolute", left: "50%", top: "50%", width: 196, height: 196, transform: "translate(-50%, -50%)", borderRadius: "50%", overflow: "hidden", zIndex: 4, pointerEvents: "none" }}>
               <AnimatePresence>
                 {scorePopup && (
                   <motion.div
@@ -2970,12 +2998,6 @@ function GameScreen({
                   </motion.div>
                 )}
               </AnimatePresence>
-           </div>
-
-           <div style={{ display: "flex", flexDirection: "column", gap: 8, width: 44, height: 220, alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" }}>
-              {dieStates.map((s, i) => locked[i] && (
-                 <Die3D key={`locked-die-${i}`} index={i} state={s} size={32} locked={true} mat={diceMat} onClick={()=>toggleLock(i)} isRolling={false} isIdle={false} />
-              ))}
            </div>
         </div>
 
