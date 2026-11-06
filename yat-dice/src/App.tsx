@@ -2340,6 +2340,9 @@ function ShopScreen({
 
 
 // ─── Screen 3: Game (Server-Authoritative + Turn Timer + Emojis + Wager) ─────
+// Puan satırları içerikten bağımsızdır; önizleme sayıları tabloyu büyütüp tepsiyi itmez
+const SCORE_ROW_HEIGHT = "clamp(22px, 3.3dvh, 28px)";
+
 function GameScreen({
   go, dark, diceMat, profile, setProfile, ws, myPlayerIndex, opponentName, onMatchEnd, activeBet,
   reconnecting, resumeState, onCloseSocket, onMatchResumed, onResumeFailed, onSessionReplaced
@@ -2844,7 +2847,7 @@ function GameScreen({
         <div style={{ marginTop: 10, padding: "0 10px" }}>
            <div style={{ display: "flex", flexDirection: "column", gap: 1, background: c.borderMid, border: `1px solid ${c.borderMid}`, borderRadius: 8, overflow: "hidden" }}>
              {SCORE_GRID.map((row, rIdx) => (
-               <div key={rIdx} style={{ display: "grid", gridTemplateColumns: "1fr 38px 38px 1fr 38px 38px", gap: 1 }}>
+               <div key={rIdx} style={{ display: "grid", gridTemplateColumns: "1fr 38px 38px 1fr 38px 38px", gap: 1, height: SCORE_ROW_HEIGHT }}>
                   {row.map((cell, cIdx) => {
                      if (!cell) return <div key={cIdx} style={{ background: c.panel, gridColumn: "span 3" }} />;
                      
@@ -2862,12 +2865,12 @@ function GameScreen({
 
                      return (
                          <React.Fragment key={cell.k}>
-                           <div style={{ background: isHeader ? c.panelAlt : c.panel, padding: "5px 6px", display: "flex", alignItems: "center" }}>
-                              <span style={{ fontSize: 11, fontWeight: isHeader?700:500, color: c.text }}>{cell.l}</span>
+                           <div style={{ background: isHeader ? c.panelAlt : c.panel, padding: "0 6px", display: "flex", alignItems: "center", minWidth: 0 }}>
+                              <span style={{ fontSize: 11, fontWeight: isHeader?700:500, color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cell.l}</span>
                            </div>
                            
                            {/* SOL SÜTUN (SEN) */}
-                           <div onClick={() => myCanScore ? scoreIt(cell.k) : null} style={{ background: myHighlight ? c.accentBg : (isHeader ? c.panelAlt : c.panel), padding: "8px 0", display: "flex", alignItems: "center", justifyContent: "center", cursor: myCanScore?"pointer":"default" }}>
+                           <div onClick={() => myCanScore ? scoreIt(cell.k) : null} style={{ background: myHighlight ? c.accentBg : (isHeader ? c.panelAlt : c.panel), display: "flex", alignItems: "center", justifyContent: "center", cursor: myCanScore?"pointer":"default" }}>
                               {myFilled || isSpec ? (
                                   <span style={{ fontSize: 13, fontWeight: 700, color: isHeader ? c.text : c.accent }}>{myVal ?? 0}</span>
                               ) : myCanScore ? (
@@ -2878,7 +2881,7 @@ function GameScreen({
                            </div>
                            
                            {/* SAĞ SÜTUN (RAKİP) */}
-                           <div style={{ background: isHeader ? c.panelAlt : c.panel, padding: "8px 0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "default" }}>
+                           <div style={{ background: isHeader ? c.panelAlt : c.panel, display: "flex", alignItems: "center", justifyContent: "center", cursor: "default" }}>
                               {oppFilled || isSpec ? (
                                   <span style={{ fontSize: 13, fontWeight: 700, color: isHeader ? c.text : c.accent }}>{oppVal ?? 0}</span>
                               ) : (
