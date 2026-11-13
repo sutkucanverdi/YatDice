@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   ShoppingBag, Users, Zap, Trophy,
   RotateCcw, Crown, Check, Lock,
-  Home, TrendingUp, Edit3, X, ChevronLeft, ChevronRight, Flag, Settings as SettingsIcon
+  Home, TrendingUp, Edit3, X, ChevronLeft, ChevronRight, Flag, Plus, Settings as SettingsIcon
 } from "lucide-react";
 import {
   APPLE_AVAILABLE, GOOGLE_AVAILABLE, IS_NATIVE, applyStatusBarTheme, haptic, hapticsEnabled, minimizeApp,
@@ -233,6 +233,7 @@ interface FriendItem {
   wins: number;
   isOnline?: boolean;
   inGame?: boolean;
+  unread?: number;
 }
 
 interface GameInvite {
@@ -1889,7 +1890,7 @@ function HomeScreen({
                           border: isMe ? `1.5px solid ${c.accent}` : `1px solid ${c.border}`
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div role="button" tabIndex={0} onClick={() => openPlayerProfile(item.username)} onKeyDown={e => { if (e.key === "Enter") openPlayerProfile(item.username); }} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0 }}>
                           <span style={{ width: 26, fontSize: item.rank <= 3 ? 17 : 12, fontWeight: 800, color: c.gold, textAlign: "center" }}>{medal}</span>
                           <Av seed={nameOf(item.username)} size={32} dark={dark} avatar={item.avatar} country={item.country} active={isMe} />
                           <div>
@@ -2988,8 +2989,10 @@ function GameScreen({
            </div>
            {/* SAĞ OYUNCU (HER ZAMAN RAKİP) */}
            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2, opacity: !isMyTurn?1:0.4, transition:"0.3s" }}>
-              <Av seed={opponentName ? opponentName.substring(0,2).toUpperCase() : "R"} size={32} active={!isMyTurn} dark={dark}/>
-              <p style={{fontSize:10, fontWeight:"bold", color:!isMyTurn?c.accent:c.text}}>{opponentName ? nameOf(opponentName) : t("Rakip")} ({myPlayerIndex === 1 ? p2Total : p1Total})</p>
+              <button type="button" onClick={() => opponentName && openPlayerProfile(opponentName)} aria-label={t("Oyuncu Profili")} style={{ background:"none", border:"none", padding:0, cursor: opponentName && !opponentName.startsWith("🤖") ? "pointer" : "default", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                <Av seed={opponentName ? nameOf(opponentName).substring(0,2).toUpperCase() : "R"} size={32} active={!isMyTurn} dark={dark}/>
+                <span style={{fontSize:10, fontWeight:"bold", color:!isMyTurn?c.accent:c.text}}>{opponentName ? nameOf(opponentName) : t("Rakip")} ({myPlayerIndex === 1 ? p2Total : p1Total})</span>
+              </button>
            </div>
         </div>
 
@@ -3711,6 +3714,266 @@ function ModeScreen({
 }
 
 
+// ─── Oyuncu Profili ve Arkadaş Mesajları ──────────────────────────────────────
+// Herhangi bir ekrandan açılabilmesi için pencere olaylarıyla tetiklenir; App kökünde gösterilir.
+type ChatFriend = { userId: number; username: string; avatar?: string; country?: string };
+
+function openPlayerProfile(username: string) {
+  if (!username || username.startsWith("🤖")) return;
+  window.dispatchEvent(new CustomEvent<string>("yat:profile", { detail: username }));
+}
+function openFriendChat(friend: ChatFriend) {
+  window.dispatchEvent(new CustomEvent<ChatFriend>("yat:chat", { detail: friend }));
+}
+
+type PublicProfile = {
+  userId: number; username: string; avatar: string; country: string; xp: number; wins: number;
+  gamesPlayed: number; highScore: number; selectedDice: string; isMe: boolean;
+  friendship: "none" | "friends" | "outgoing" | "incoming"; isOnline: boolean; inGame: boolean;
+};
+
+function PlayerProfileModal({ name, dark, onClose }: { name: string; dark: boolean; onClose: () => void }) {
+  const c = C(dark);
+  const [profile, setProfile] = useState<PublicProfile | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const token = localStorage.getItem("yatzy_jwt_token") || "";
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_BASE}/players/profile?name=${encodeURIComponent(name)}`, { headers: { "Authorization": "Bearer " + token } })
+      .then(async res => {
+        if (!res.ok) throw new Error((await res.text()) || t("Profil çekilemedi"));
+        return res.json();
+      })
+      .then(data => { if (active) setProfile(data); })
+      .catch((err: Error) => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [name, token]);
+
+  const addFriend = async () => {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/friends/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ username: profile.username })
+      });
+      if (!res.ok) throw new Error((await res.text()) || t("İstek gönderilemedi"));
+      setProfile({ ...profile, friendship: "outgoing" });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const country = profile ? COUNTRIES.find(co => co.code === profile.country) : undefined;
+  const winRate = profile && profile.gamesPlayed > 0 ? Math.round((profile.wins / profile.gamesPlayed) * 100) : 0;
+  const stats: [string, string | number][] = profile ? [
+    [t("Seviye"), computeLevel(profile.xp)],
+    [t("Galibiyet"), profile.wins],
+    [t("Maç"), profile.gamesPlayed],
+    [t("Oran"), `%${winRate}`],
+    [t("Rekor"), profile.highScore],
+  ] : [];
+  const actionStyle = (primary: boolean): React.CSSProperties => ({
+    flex: 1, padding: "12px 10px", borderRadius: 12, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: APP_FONT,
+    background: primary ? c.accent : c.panelAlt, color: primary ? (dark ? c.bg : "#fff") : c.text,
+    border: primary ? "none" : `1px solid ${c.border}`
+  });
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 420, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(6px)" }}>
+      <motion.div initial={{ scale: 0.94, y: 16 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.94, y: 16 }} onClick={e => e.stopPropagation()}
+        role="dialog" aria-label={t("Oyuncu Profili")}
+        style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 350, padding: 22, border: `1px solid ${c.borderMid}`, boxShadow: "0 20px 60px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", gap: 16, fontFamily: APP_FONT }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", margin: "-6px -6px -10px 0" }}>
+          <button type="button" onClick={onClose} aria-label={t("Kapat")} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        {!profile ? (
+          <p style={{ textAlign: "center", color: error ? c.danger : c.textSub, fontSize: 13, margin: "20px 0" }}>{error || t("Profil yükleniyor...")}</p>
+        ) : (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <Av seed={nameOf(profile.username)} size={78} dark={dark} avatar={profile.avatar} country={profile.country} active={profile.isOnline} />
+              <p style={{ fontSize: 20, fontWeight: 900, color: c.text, margin: 0 }}><Handle value={profile.username} tagColor={c.textSub} /></p>
+              <p style={{ fontSize: 12, color: c.textSub, margin: 0 }}>
+                {country ? `${country.flag} ${t(country.name)}` : ""}
+                {profile.friendship === "friends" && <> · {profile.inGame ? t("🎮 Oyunda") : profile.isOnline ? t("🟢 Çevrimiçi") : t("⚪ Çevrimdışı")}</>}
+              </p>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+              {stats.map(([label, value]) => (
+                <div key={label} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 12, padding: "10px 4px", textAlign: "center" }}>
+                  <p style={{ fontSize: 16, fontWeight: 800, color: c.accent, margin: 0 }}>{value}</p>
+                  <p style={{ fontSize: 9.5, color: c.textSub, margin: "2px 0 0" }}>{label}</p>
+                </div>
+              ))}
+            </div>
+            {MAT[profile.selectedDice as DieMat] && (
+              <p style={{ fontSize: 12, color: c.textSub, textAlign: "center", margin: 0 }}>{t("Zarı: {0}", t(MAT[profile.selectedDice as DieMat].name))}</p>
+            )}
+            {error && <p style={{ fontSize: 12, color: c.danger, textAlign: "center", margin: 0 }}>{error}</p>}
+            {!profile.isMe && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {profile.friendship === "friends" && (
+                  <button type="button" style={actionStyle(true)} onClick={() => { onClose(); openFriendChat({ userId: profile.userId, username: profile.username, avatar: profile.avatar, country: profile.country }); }}>
+                    {t("💬 Mesaj Gönder")}
+                  </button>
+                )}
+                {profile.friendship === "none" && (
+                  <button type="button" style={actionStyle(true)} disabled={busy} onClick={addFriend}>{t("➕ Arkadaş Ekle")}</button>
+                )}
+                {profile.friendship === "outgoing" && <button type="button" style={actionStyle(false)} disabled>{t("İstek Gönderildi")}</button>}
+                {profile.friendship === "incoming" && <button type="button" style={actionStyle(false)} disabled>{t("Sana istek gönderdi")}</button>}
+                <button type="button" aria-label={t("Profili şikâyet et")} title={t("Profili şikâyet et")} onClick={() => reportProfile(profile.username)}
+                  style={{ ...actionStyle(false), flex: "0 0 48px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Flag size={16} />
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
+type ChatLine = { id: number; mine: boolean; text: string; at: string };
+
+function FriendChatSheet({ friend, dark, onClose }: { friend: ChatFriend; dark: boolean; onClose: () => void }) {
+  const c = C(dark);
+  const token = localStorage.getItem("yatzy_jwt_token") || "";
+  const [messages, setMessages] = useState<ChatLine[]>([]);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [closed, setClosed] = useState(false);
+  const [sending, setSending] = useState(false);
+  const lastIdRef = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/messages?with=${friend.userId}&after=${lastIdRef.current}`, { headers: { "Authorization": "Bearer " + token } });
+      if (res.status === 403) {
+        setClosed(true);
+        setError(await res.text());
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      const fresh: ChatLine[] = data.messages || [];
+      if (fresh.length) {
+        lastIdRef.current = fresh[fresh.length - 1].id;
+        setMessages(prev => [...prev, ...fresh.filter(m => !prev.some(p => p.id === m.id))]);
+      }
+    } catch { /* bağlantı geri gelince tekrar denenir */ }
+  }, [friend.userId, token]);
+
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => { if (!closed) void load(); }, 3000);
+    return () => clearInterval(timer);
+  }, [load, closed]);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages.length]);
+
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const body = text.trim();
+    if (!body || sending || closed) return;
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ to: friend.userId, text: body })
+      });
+      if (!res.ok) throw new Error((await res.text()) || t("Mesaj gönderilemedi"));
+      const sent: ChatLine = await res.json();
+      lastIdRef.current = Math.max(lastIdRef.current, sent.id);
+      setMessages(prev => [...prev, sent]);
+      setText("");
+      haptic();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const reportChat = async () => {
+    if (!window.confirm(t("{0} adlı oyuncuyu bu sohbetteki mesajları nedeniyle şikâyet etmek istiyor musun?", nameOf(friend.username)))) return;
+    try {
+      const res = await fetch(`${API_BASE}/ugc/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ username: friend.username, reason: "Arkadaş sohbetinde uygunsuz mesaj" })
+      });
+      window.alert(res.ok ? t("Şikâyetin moderasyon ekibine iletildi.") : t("Şikâyet gönderilemedi. Lütfen tekrar dene."));
+    } catch {
+      window.alert(t("Şikâyet gönderilemedi. Lütfen tekrar dene."));
+    }
+  };
+
+  const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(getLang() === "en" ? "en-US" : "tr-TR", { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 410, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <motion.div initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }} onClick={e => e.stopPropagation()}
+        role="dialog" aria-label={t("Arkadaş Sohbeti")}
+        style={{ background: c.panel, width: "100%", maxWidth: 480, height: "min(78dvh, 640px)", borderRadius: "22px 22px 0 0", border: `1px solid ${c.borderMid}`, display: "flex", flexDirection: "column", fontFamily: APP_FONT, paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${c.border}` }}>
+          <button type="button" onClick={() => openPlayerProfile(friend.username)} style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", flex: 1, minWidth: 0, textAlign: "left" }}>
+            <Av seed={nameOf(friend.username)} size={34} dark={dark} avatar={friend.avatar} country={friend.country} />
+            <span style={{ fontSize: 15, fontWeight: 800, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Handle value={friend.username} tagColor={c.textSub} /></span>
+          </button>
+          <button type="button" onClick={reportChat} aria-label={t("🚩 Raporla")} title={t("🚩 Raporla")} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer", padding: 6, display: "flex" }}><Flag size={16} /></button>
+          <button type="button" onClick={onClose} aria-label={t("Kapat")} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer", padding: 6, display: "flex" }}><X size={20} /></button>
+        </div>
+
+        <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {messages.length === 0 && !closed && (
+            <p style={{ textAlign: "center", color: c.textSub, fontSize: 12, margin: "auto 0" }}>{t("Henüz mesaj yok. İlk mesajı sen gönder! 👋")}</p>
+          )}
+          {messages.map(m => (
+            <div key={m.id} style={{ alignSelf: m.mine ? "flex-end" : "flex-start", maxWidth: "78%" }}>
+              <div style={{ background: m.mine ? c.accent : c.panelAlt, color: m.mine ? (dark ? c.bg : "#fff") : c.text, padding: "8px 12px", borderRadius: m.mine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", fontSize: 14, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {m.text}
+              </div>
+              <p style={{ fontSize: 10, color: c.textFaint, margin: "2px 4px 0", textAlign: m.mine ? "right" : "left" }}>{timeOf(m.at)}</p>
+            </div>
+          ))}
+        </div>
+
+        {error && <p style={{ fontSize: 12, color: c.danger, margin: "0 16px 6px" }}>{error}</p>}
+        <form onSubmit={sendMessage} style={{ display: "flex", gap: 8, padding: "10px 12px 12px", borderTop: `1px solid ${c.border}` }}>
+          <input
+            value={text}
+            onChange={e => setText(e.target.value)}
+            maxLength={300}
+            disabled={closed}
+            placeholder={t("Mesaj yaz...")}
+            aria-label={t("Mesaj yaz...")}
+            style={{ flex: 1, minWidth: 0, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 12, padding: "11px 14px", color: c.text, fontSize: 14, outline: "none", fontFamily: APP_FONT }}
+          />
+          <button type="submit" disabled={!text.trim() || sending || closed}
+            style={{ background: text.trim() ? c.accent : c.panelAlt, color: text.trim() ? (dark ? c.bg : "#fff") : c.textSub, border: "none", borderRadius: 12, padding: "0 16px", fontWeight: 800, fontSize: 13, cursor: text.trim() ? "pointer" : "default" }}>
+            {t("Gönder")}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ─── Screen 8: Settings (Tema, Dil, Ses, Hesap, Yasal) ────────────────────────
 type ThemeMode = "dark" | "light" | "system";
 
@@ -4149,6 +4412,19 @@ function FriendsScreen({
 }) {
   const c = C(dark);
   const [searchName, setSearchName] = useState("");
+  const [searchTag, setSearchTag] = useState("");
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  // "Utku#1234" yapıştırılırsa ad ve etiket alanlarına ayrılır
+  const onNickChange = (value: string) => {
+    const i = value.indexOf("#");
+    if (i >= 0) {
+      setSearchName(value.slice(0, i));
+      setSearchTag(value.slice(i + 1).replace(/\D/g, "").slice(0, 6));
+      tagInputRef.current?.focus();
+    } else {
+      setSearchName(value);
+    }
+  };
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [statusMsg, setStatusMsg] = useState<{ text: string; isErr: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -4200,7 +4476,7 @@ function FriendsScreen({
           "Content-Type": "application/json",
           "Authorization": "Bearer " + token
         },
-        body: JSON.stringify({ username: searchName.trim() })
+        body: JSON.stringify({ username: searchName.trim() + (searchTag ? "#" + searchTag : "") })
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -4208,6 +4484,7 @@ function FriendsScreen({
       }
       setStatusMsg({ text: t("Arkadaşlık isteği gönderildi!"), isErr: false });
       setSearchName("");
+      setSearchTag("");
       onRefresh();
     } catch (err: any) {
       setStatusMsg({ text: err.message, isErr: true });
@@ -4266,21 +4543,38 @@ function FriendsScreen({
             <p style={{ fontSize: 11, fontWeight: 700, color: c.textSub, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
               {t("Oyuncu Etiketiyle Arkadaş Ekle")}
             </p>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
               <input
                 type="text"
-                placeholder={t("Örn: Utku#1234")}
+                aria-label={t("Oyuncu adı")}
+                placeholder={t("ad")}
                 value={searchName}
-                onChange={e => setSearchName(e.target.value)}
-                style={{ flex: 1, background: c.bg, border: `1px solid ${c.border}`, padding: "11px 14px", borderRadius: 12, color: c.text, fontSize: 13, fontWeight: 600, outline: "none" }}
+                maxLength={30}
+                autoCapitalize="none"
+                autoCorrect="off"
+                onChange={e => onNickChange(e.target.value)}
+                style={{ flex: 1.6, minWidth: 0, background: "transparent", border: "none", borderBottom: `1.5px solid ${c.borderMid}`, borderRadius: 0, padding: "8px 2px", color: c.text, fontSize: 15, fontWeight: 700, outline: "none", fontFamily: APP_FONT }}
+              />
+              <span style={{ color: c.textSub, fontSize: 20, fontWeight: 700, paddingBottom: 6 }}>#</span>
+              <input
+                ref={tagInputRef}
+                type="text"
+                inputMode="numeric"
+                aria-label={t("Etiket")}
+                placeholder={t("ETİKET")}
+                value={searchTag}
+                maxLength={6}
+                onChange={e => setSearchTag(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", borderBottom: `1.5px solid ${c.borderMid}`, borderRadius: 0, padding: "8px 2px", color: c.text, fontSize: 15, fontWeight: 700, letterSpacing: "0.08em", outline: "none", fontFamily: APP_FONT }}
               />
               <motion.button
-                whileTap={{ scale: 0.96 }}
+                whileTap={{ scale: 0.94 }}
                 type="submit"
+                aria-label={t("Arkadaş ekle")}
                 disabled={loading || !searchName.trim()}
-                style={{ padding: "0 18px", background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13, cursor: "pointer" }}
+                style={{ width: 42, height: 42, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: searchName.trim() ? c.accent : c.panelAlt, color: searchName.trim() ? (dark ? c.bg : "#fff") : c.textSub, border: "none", borderRadius: 10, cursor: searchName.trim() ? "pointer" : "default" }}
               >
-                {t("Ekle")}
+                <Plus size={22} strokeWidth={2.5} />
               </motion.button>
             </div>
             {statusMsg && (
@@ -4345,36 +4639,50 @@ function FriendsScreen({
             </p>
             {friends.length === 0 ? (
               <div style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: 14, padding: 20, textAlign: "center" }}>
-                <p style={{ fontSize: 12, color: c.textSub, margin: 0 }}>{t("Henüz arkadaşın yok. Yukarıdan kullanıcı adıyla arkadaş ekleyebilirsin!")}</p>
+                <p style={{ fontSize: 12, color: c.textSub, margin: 0 }}>{t("Henüz arkadaşın yok. Yukarıdan ad ve etiketle arkadaş ekleyebilirsin!")}</p>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {friends.map(f => (
-                  <div key={f.friendshipId} style={{ background: c.panel, border: `1px solid ${f.isOnline ? c.accentRing : c.border}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div key={f.friendshipId} style={{ background: c.panel, border: `1px solid ${f.isOnline ? c.accentRing : c.border}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div role="button" tabIndex={0} onClick={() => openPlayerProfile(f.username)} onKeyDown={e => { if (e.key === "Enter") openPlayerProfile(f.username); }} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0 }}>
                       <div style={{ position: "relative" }}>
-                        <Av seed={f.username.substring(0, 2).toUpperCase()} size={40} dark={dark} avatar={f.avatar} country={f.country} active={!!f.isOnline} />
+                        <Av seed={nameOf(f.username).substring(0, 2).toUpperCase()} size={40} dark={dark} avatar={f.avatar} country={f.country} active={!!f.isOnline} />
                         <span style={{
                           position: "absolute", bottom: -1, right: -1, width: 11, height: 11,
                           borderRadius: "50%", border: `2px solid ${c.panel}`,
                           background: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : "#7f8c8d")
                         }} />
                       </div>
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}><Handle value={f.username} tagColor={c.textSub} /></p>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : c.textFaint) }}>
-                            {f.inGame ? t("🎮 Oyunda") : (f.isOnline ? t("🟢 Çevrimiçi") : t("⚪ Çevrimdışı"))}
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Handle value={f.username} tagColor={c.textSub} /></p>
+                        <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0", whiteSpace: "nowrap" }}>
+                          <span style={{ fontWeight: 700, color: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : c.textFaint) }}>
+                            {f.inGame ? t("Oyunda") : (f.isOnline ? t("Çevrimiçi") : t("Çevrimdışı"))}
                           </span>
-                        </div>
-                        <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0" }}>{t("Seviye")} {computeLevel(f.xp)} • 🏆 {f.wins} {t("Galibiyet")}</p>
+                          {" • "}{t("Sv.")}{computeLevel(f.xp)}
+                        </p>
                       </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <motion.button
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => openFriendChat({ userId: f.userId, username: f.username, avatar: f.avatar, country: f.country })}
+                        aria-label={t("Mesaj gönder")}
+                        title={t("Mesaj gönder")}
+                        style={{ position: "relative", background: c.panelAlt, color: c.text, border: `1px solid ${c.border}`, borderRadius: 10, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}
+                      >
+                        💬
+                        {(f.unread || 0) > 0 && (
+                          <span style={{ position: "absolute", top: -6, right: -6, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: c.danger, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {f.unread}
+                          </span>
+                        )}
+                      </motion.button>
                       <motion.button
                         whileTap={{ scale: 0.95 }}
                         onClick={() => onInviteToGame(f.userId)}
-                        style={{ background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                        style={{ background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 10, padding: "8px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
                       >
                         {t("🎲 Davet Et")}
                       </motion.button>
@@ -4493,6 +4801,21 @@ export default function App() {
   const [outgoingRequests, setOutgoingRequests] = useState<FriendItem[]>([]);
   const [gameInvites, setGameInvites] = useState<GameInvite[]>([]);
   const [onlineToast, setOnlineToast] = useState<FriendItem | null>(null);
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [chatFriend, setChatFriend] = useState<ChatFriend | null>(null);
+  const chatFriendRef = useRef<ChatFriend | null>(null);
+  useEffect(() => { chatFriendRef.current = chatFriend; }, [chatFriend]);
+  const prevUnreadRef = useRef<Map<number, number>>(new Map());
+  useEffect(() => {
+    const onProfile = (e: Event) => setProfileName((e as CustomEvent<string>).detail);
+    const onChat = (e: Event) => setChatFriend((e as CustomEvent<ChatFriend>).detail);
+    window.addEventListener("yat:profile", onProfile);
+    window.addEventListener("yat:chat", onChat);
+    return () => {
+      window.removeEventListener("yat:profile", onProfile);
+      window.removeEventListener("yat:chat", onChat);
+    };
+  }, []);
   const [appToast, setAppToast] = useState<string | null>(null);
   const prevOnlineIdsRef = React.useRef<Set<number>>(new Set());
   const friendsInitRef = React.useRef<boolean>(false);
@@ -4527,6 +4850,14 @@ export default function App() {
           }
         }
         prevOnlineIdsRef.current = new Set(nextFriends.filter(f => f.isOnline).map(f => f.userId));
+        for (const f of nextFriends) {
+          const unread = f.unread || 0;
+          const before = prevUnreadRef.current.get(f.userId) || 0;
+          if (friendsInitRef.current && unread > before && chatFriendRef.current?.userId !== f.userId) {
+            emitToast(t("💬 {0} sana mesaj gönderdi", nameOf(f.username)));
+          }
+          prevUnreadRef.current.set(f.userId, unread);
+        }
         friendsInitRef.current = true;
         setFriends(nextFriends);
         setIncomingRequests(data.incoming || []);
@@ -4847,7 +5178,8 @@ export default function App() {
     setWs(null);
   };
 
-  const badgeCount = incomingRequests.length + gameInvites.length;
+  const unreadMessages = friends.reduce((sum, f) => sum + (f.unread || 0), 0);
+  const badgeCount = incomingRequests.length + gameInvites.length + unreadMessages;
   const claimableQuests = getClaimableQuestCount(profile);
 
   return (
@@ -4870,13 +5202,13 @@ export default function App() {
               style={{
                 position: "absolute", top: 14, left: 16, right: 16,
                 background: c.panel, color: c.text,
-                border: `1.5px solid ${c.danger}`, borderRadius: 14,
+                border: `1.5px solid ${appToast.startsWith("💬") ? c.accent : c.danger}`, borderRadius: 14,
                 padding: "11px 14px", fontSize: 12, fontWeight: 700,
-                zIndex: 250, boxShadow: "0 12px 30px rgba(0,0,0,0.45)",
+                zIndex: 450, boxShadow: "0 12px 30px rgba(0,0,0,0.45)",
                 display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10
               }}
             >
-              <span>⚠️ {appToast}</span>
+              <span>{appToast.startsWith("💬") ? appToast : `⚠️ ${appToast}`}</span>
               <button onClick={() => setAppToast(null)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer", display: "flex" }}>
                 <X size={15} />
               </button>
@@ -5083,6 +5415,15 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
+
+        <AnimatePresence>
+          {chatFriend && (
+            <FriendChatSheet key={chatFriend.userId} friend={chatFriend} dark={dark} onClose={() => { setChatFriend(null); void fetchFriends(); }} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {profileName && <PlayerProfileModal key={profileName} name={profileName} dark={dark} onClose={() => setProfileName(null)} />}
+        </AnimatePresence>
 
         {/* Alt Navigasyon */}
         {hasBottomNav && (

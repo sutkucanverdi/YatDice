@@ -1765,7 +1765,14 @@ func createTables() {
 		}
 	}
 
+	for _, m := range socialMigrations {
+		if _, err := db.Exec(m); err != nil {
+			log.Printf("⚠️ Şema güncellemesi uygulanamadı: %v | %s", err, m)
+		}
+	}
+
 	pruneResolvedReports()
+	startSocialMaintenance()
 	fmt.Println("📦 Veritabanı tabloları ve şema güncellemeleri hazırlandı!")
 }
 
@@ -2333,6 +2340,7 @@ type FriendItem struct {
 	Wins         int    `json:"wins"`
 	IsOnline     bool   `json:"isOnline"`
 	InGame       bool   `json:"inGame"`
+	Unread       int    `json:"unread"`
 }
 
 // GET /friends : Kullanıcının arkadaşlarını, bekleyen isteklerini ve aktif oyun davetlerini döner
@@ -2417,6 +2425,11 @@ func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 	}
 	pendingInvites[myID] = validInvites
 	mu.Unlock()
+
+	unread := unreadMessageCounts(myID)
+	for i := range friends {
+		friends[i].Unread = unread[friends[i].UserID]
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -2643,6 +2656,14 @@ func main() {
 	http.HandleFunc("/friends/request", handleFriendRequest)
 	http.HandleFunc("/friends/respond", handleFriendRespond)
 	http.HandleFunc("/friends/invite", handleFriendInvite)
+	http.HandleFunc("/players/profile", handlePlayerProfile)
+	http.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			handleSendMessage(w, r)
+			return
+		}
+		handleGetMessages(w, r)
+	})
 	http.HandleFunc("/ugc/report", handleReportUser)
 	http.HandleFunc("/ugc/block", handleBlockUser)
 	http.HandleFunc("/ugc/unblock", handleUnblockUser)

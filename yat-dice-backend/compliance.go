@@ -284,7 +284,7 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 	if _, err := db.Exec(`
 		INSERT INTO user_reports (reporter_id, reported_user_id, reported_username, reason, evidence)
 		VALUES ($1, $2, $3, $4, $5)
-	`, reporterID, targetID, targetName, reason, recentChatEvidence(targetID)); err != nil {
+	`, reporterID, targetID, targetName, reason, reportEvidence(targetID, reporterID)); err != nil {
 		httpError(w, r, "Bildirim kaydedilemedi", http.StatusInternalServerError)
 		return
 	}
@@ -481,7 +481,7 @@ func handleWebAccountDeletion(w http.ResponseWriter, r *http.Request) {
 }
 
 const accountDeletionFormHTML = `<p>Bu sayfadan Yat Dice hesabınızı ve ilişkili verilerinizi silebilirsiniz. Silinen hesap geri getirilemez.</p>
-<p><strong>Silinenler:</strong> kullanıcı adı, e-posta, şifre özeti, cihaz kimliği, profil fotoğrafı, ülke, istatistikler, jetonlar, koleksiyon, arkadaşlıklar ve engeller.</p>
+<p><strong>Silinenler:</strong> kullanıcı adı, e-posta, şifre özeti, cihaz kimliği, profil fotoğrafı, ülke, istatistikler, jetonlar, koleksiyon, arkadaşlıklar, arkadaş mesajları ve engeller.</p>
 <p><strong>Saklananlar:</strong> Hakkınızda açılmış ve henüz çözülmemiş şikâyet kayıtları güvenlik amacıyla çözülene kadar, çözülen şikâyetler en fazla 90 gün saklanır.</p>
 <form method="post" action="/account/delete">
 <label>Kullanıcı adı<input name="username" required maxlength="60" autocomplete="username"></label>
@@ -784,7 +784,8 @@ const privacyPolicyHTML = `<p><strong>Son güncelleme:</strong> Kasım 2026</p>
 <li><strong>Misafir hesap:</strong> uygulamanın ürettiği rastgele cihaz kimliği. Reklam kimliği kullanılmaz.</li>
 <li><strong>Profil ve oyun:</strong> profil fotoğrafı veya avatar, ülke tercihi, XP, jeton, kasa, istatistikler, görevler ve zar koleksiyonu.</li>
 <li><strong>Sosyal veriler:</strong> arkadaşlıklar, oyun davetleri, engeller ve şikâyet kayıtları.</li>
-<li><strong>Sohbet:</strong> mesajlar kalıcı olarak kaydedilmez. Şikâyet incelemesi için son mesajlar en fazla 30 dakika bellekte tutulur; şikâyet edilirse şikâyet edilen oyuncunun bu mesajları şikâyet kaydına eklenir.</li>
+<li><strong>Maç sohbeti:</strong> mesajlar kalıcı olarak kaydedilmez. Şikâyet incelemesi için son mesajlar en fazla 30 dakika bellekte tutulur; şikâyet edilirse şikâyet edilen oyuncunun bu mesajları şikâyet kaydına eklenir.</li>
+<li><strong>Arkadaş mesajları:</strong> yalnızca arkadaşlar arasında gönderilebilir; teslim edilmek için en fazla 30 gün saklanır ve hesap silinince silinir. Şikâyet edilirse şikâyet edilen oyuncunun son 7 günde size yazdığı mesajlar şikâyet kaydına eklenir.</li>
 <li><strong>Teknik veriler:</strong> IP adresi güvenlik ve hız sınırlaması için işlenir; barındırma sağlayıcısının sistem kayıtlarında geçici olarak bulunabilir.</li></ul>
 <h2>3. Toplama Yöntemi, Amaçlar ve Hukuki Sebepler</h2><p>Veriler, uygulama ve web sitesi üzerinden elektronik ortamda; sizin girdiğiniz bilgilerle, seçtiğiniz giriş sağlayıcısından (Google veya Apple) gelen bilgilerle ve oyunu oynarken otomatik yollarla toplanır. Veriler hesabı ve oyunu sunmak, eşleştirme ve sosyal özellikleri çalıştırmak, şifre kurtarmak, kötüye kullanımı önlemek ve yasal yükümlülükleri yerine getirmek için işlenir. Hukuki sebepler sözleşmenin ifası, meşru menfaat ve gerektiğinde açık rızadır.</p>
 <h2>4. Paylaşım</h2><p>Veriler satılmaz ve reklam amacıyla paylaşılmaz. Hizmet için gerekli ölçüde barındırma ve veritabanı sağlayıcıları, e-posta gönderim sağlayıcısı ve kullandığınız giriş yöntemine göre Google veya Apple ile paylaşılabilir. Bu sağlayıcılar yurt dışında bulunabilir. Kullanıcı adı, avatar, ülke ve oyun istatistikleri diğer oyunculara görünür.</p>
