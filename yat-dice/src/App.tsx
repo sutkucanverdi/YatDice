@@ -2516,6 +2516,17 @@ function GameScreen({
 
   const [opponentOffline, setOpponentOffline] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  // Dar telefonlarda üst çubuğa sığmak için sohbet butonu yalnızca simge olarak gösterilir
+  const [narrowBar, setNarrowBar] = useState(() => typeof window !== "undefined" && window.innerWidth < 380);
+  // Kısa ekranlarda (ör. 320x568) sehpa orantılı küçülür ki Zar At butonu kaydırmadan görünsün
+  const [viewportH, setViewportH] = useState(() => typeof window !== "undefined" ? window.innerHeight : 800);
+  useEffect(() => {
+    const onResize = () => { setNarrowBar(window.innerWidth < 380); setViewportH(window.innerHeight); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Puan alınabilecek başka kutu varken 0 puanlık kutuya basılırsa onay istenir
+  const [zeroConfirmKey, setZeroConfirmKey] = useState<string | null>(null);
   const [dieStates, setDieStates] = useState<DieState[]>(()=>{
     const pos = generateRandomPositions();
     return ([3,1,5,2,4] as DieVal[]).map((v,i)=>({ ...initDie(v,i), px:pos[i].x, py:pos[i].y }));
@@ -2659,6 +2670,7 @@ function GameScreen({
   }, [opponentLeft, isMyTurn]);
 
   const handleLeave = () => setShowLeaveConfirm(true);
+  useEffect(() => { setZeroConfirmKey(null); }, [isMyTurn, rollsLeft]);
 
   const confirmLeave = () => {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "LEAVE" }));
@@ -2878,9 +2890,18 @@ function GameScreen({
     sendGame({ type: "TOGGLE_LOCK", locked: newLocked });
   };
 
-  const scoreIt = (key:string) => {
+  const scoreIt = (key:string, confirmedZero = false) => {
     if (!isMyTurn || rolling || rollsLeft===3 || !ws) return;
     if (myScores[key] != null) return;
+    if (!confirmedZero) {
+      const dice = dieStates.map(s => s.value);
+      const otherScores = CATS.some(cat => cat.key !== key && myScores[cat.key] == null && calcScore(cat.key, dice) > 0);
+      if (calcScore(key, dice) === 0 && otherScores) {
+        setZeroConfirmKey(key);
+        return;
+      }
+    }
+    setZeroConfirmKey(null);
     // Puanı sunucu hesaplayıp her iki oyuncuya SCORE_SELECTED olarak yayınlar
     haptic("medium");
     sendGame({ type: "SCORE_SELECTED", key: key });
@@ -2915,12 +2936,13 @@ function GameScreen({
 
   const diceVals = dieStates.map(s=>s.value);
   const canScore = rollsLeft < 3 && !rolling;
+  const trayScale = Math.min(1, Math.max(0.7, 1 - (640 - viewportH) / 220));
 
   return (
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column", position:"relative" }}>
       <div style={{ padding: "12px 12px 0", background: c.panel, display:"flex", justifyContent:"space-between", alignItems:"center", gap: 6 }}>
-         <button onClick={handleLeave} style={{ background: "transparent", border: "none", color: c.danger, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 2, padding: 0, whiteSpace: "nowrap", flexShrink: 0 }}>
-           <ChevronLeft size={16} /> {t("TERK ET")}
+         <button type="button" onClick={handleLeave} style={{ background: dark ? "rgba(192,57,43,0.16)" : "rgba(176,48,32,0.1)", border: `1px solid ${dark ? "rgba(192,57,43,0.55)" : "rgba(176,48,32,0.45)"}`, borderRadius: 8, color: c.danger, fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 1, padding: "4px 8px 4px 3px", whiteSpace: "nowrap", flexShrink: 0 }}>
+           <ChevronLeft size={15} /> {t("TERK ET")}
          </button>
 
          {/* Hızlı Emoji ve Canlı Sohbet Çubuğu */}
@@ -2931,7 +2953,7 @@ function GameScreen({
                onClick={() => sendEmoji(em)}
                style={{
                  background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:8,
-                 padding:"3px 5px", cursor: emojiCooldown ? "not-allowed" : "pointer",
+                 padding: narrowBar ? "3px 4px" : "3px 5px", cursor: emojiCooldown ? "not-allowed" : "pointer",
                  fontSize:13, opacity: emojiCooldown ? 0.45 : 1, transition: "0.15s"
                }}
              >
@@ -2950,13 +2972,14 @@ function GameScreen({
            </button>
            <button
              onClick={() => setChatOpen(true)}
+             aria-label={t("💬 Sohbet")}
              style={{
                position: "relative", background: c.accentBg, border: `1px solid ${c.accentRing}`,
                color: c.accent, borderRadius: 8, padding: "4px 7px", cursor: "pointer", whiteSpace: "nowrap",
                fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4
              }}
            >
-             {t("💬 Sohbet")}
+             {narrowBar ? "💬" : t("💬 Sohbet")}
              {unreadChat > 0 && (
                <span style={{
                  position: "absolute", top: -5, right: -5, background: c.danger, color: "#fff",
@@ -3087,13 +3110,13 @@ function GameScreen({
         )}
       </AnimatePresence>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "15px", gap: 15 }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 360, height: 220, alignItems: "center", justifyContent: "space-between", position: "relative" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "15px", gap: 22 }}>
+        <div style={{ display: "flex", width: "100%", maxWidth: 360, height: 220, alignItems: "center", justifyContent: "space-between", position: "relative", flexShrink: 0, transform: trayScale < 1 ? `scale(${trayScale})` : undefined, transformOrigin: "center top", marginBottom: trayScale < 1 ? -Math.round(220 * (1 - trayScale)) : 0 }}>
            <div style={{ width: 44, height: 220, flexShrink: 0 }}></div>
 
            {/* Yuvarlak Zar Tepsisi */}
            <div style={{
-              width: "220px", height: "220px", borderRadius: "50%", flexShrink: 0,
+              width: "220px", height: "220px", boxSizing: "border-box", borderRadius: "50%", flexShrink: 0,
               background: "radial-gradient(circle at center, #27ae60 0%, #145a32 100%)",
               border: `12px solid ${dark?"#5c3a21":"#8e5a32"}`,
               boxShadow: "inset 0 10px 20px rgba(0,0,0,0.5), 0 8px 16px rgba(0,0,0,0.3)",
@@ -3213,6 +3236,38 @@ function GameScreen({
               >
                 {t("Ana Sayfaya Dön")}
               </motion.button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {zeroConfirmKey && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setZeroConfirmKey(null)}
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 105, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          >
+            <motion.div
+              role="alertdialog" aria-label={t("0 puan yazılsın mı?")}
+              initial={{ scale: 0.9, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 12 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: c.panel, padding: "22px 20px", borderRadius: 20, textAlign: "center", width: "100%", maxWidth: 290, border: `1px solid ${c.border}`, boxShadow: `0 20px 40px ${c.shadow}` }}
+            >
+              <h3 style={{ color: c.text, fontSize: 17, fontWeight: 800, margin: 0 }}>{t("0 puan yazılsın mı?")}</h3>
+              <p style={{ color: c.textSub, fontSize: 13, margin: "8px 0 0", lineHeight: 1.4 }}>
+                {t("{0} kutusuna 0 puan yazılacak. Emin misin?", t(CATS.find(cat => cat.key === zeroConfirmKey)?.label ?? zeroConfirmKey))}
+              </p>
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button type="button" onClick={() => setZeroConfirmKey(null)}
+                  style={{ flex: 1, padding: "12px", borderRadius: 12, background: c.panelAlt, color: c.text, border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                  {t("Vazgeç")}
+                </button>
+                <button type="button" onClick={() => scoreIt(zeroConfirmKey, true)}
+                  style={{ flex: 1, padding: "12px", borderRadius: 12, background: c.accent, color: dark ? c.bg : "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+                  {t("Evet, 0 Yaz")}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
