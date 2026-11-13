@@ -150,8 +150,8 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Hesap silinince Apple yetkisini geri almak için | *(Apple girişi açıksa gerekli)* |
 | `ADMIN_TOKEN` | `/admin` paneli anahtarı, en az 32 karakter | *(Boşsa panel kapalı)* |
 | `LEGAL_OWNER_NAME`, `LEGAL_CONTACT_EMAIL` | Hukuk metinlerindeki sahip ve iletişim bilgisi | *(Üretimde gerekli)* |
-| `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | `http://localhost:8080` |
-| `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | `ws://localhost:8080` |
+| `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | Geliştirmede boş (sayfanın adresi kullanılır), üretimde `https://backend-adresin` |
+| `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | Geliştirmede boş (sayfanın adresi kullanılır), üretimde `wss://backend-adresin` |
 | `VITE_GOOGLE_CLIENT_ID` | Web ve Android Google girişi için web istemci kimliği | *(Boşsa buton gizli)* |
 | `VITE_GOOGLE_IOS_CLIENT_ID` | iOS Google girişi için istemci kimliği | *(Boşsa iOS'ta buton gizli)* |
 

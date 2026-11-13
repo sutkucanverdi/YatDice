@@ -11,8 +11,11 @@ import {
   openExternal, registerNativeHandlers
 } from "./native";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080";
-const WS_BASE  = import.meta.env.VITE_WS_URL  || "ws://localhost:8080";
+// Geliştirmede adres verilmezse sayfanın açıldığı makinedeki 8080 portu kullanılır.
+// Böylece hem localhost'tan hem telefondan (ağ IP'si değişse bile) backend'e ulaşılır.
+const DEV_HOST = import.meta.env.DEV && typeof location !== "undefined" ? location.hostname : "localhost";
+const API_BASE = import.meta.env.VITE_API_URL || `http://${DEV_HOST}:8080`;
+const WS_BASE  = import.meta.env.VITE_WS_URL  || `ws://${DEV_HOST}:8080`;
 const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const APP_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
