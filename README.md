@@ -145,11 +145,11 @@ Kök dizindeki [`.env.example`](.env.example) dosyasını `.env` olarak kopyalay
 | `TRUSTED_PROXY_COUNT` | Sunucunun önündeki güvenilir proxy sayısı; `0` ise `X-Forwarded-For` yok sayılır | `0` |
 | `ALLOWED_ORIGIN` | CORS ve WebSocket izin verilen origin (`*` veya domain) | `*` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Şifre sıfırlama e-postası için SMTP (STARTTLS, 587) | *(Boşsa e-posta gönderilmez)* |
-| `REPORT_NOTIFY_EMAIL` | Yeni şikâyet bildirim adresi | *(İsteğe bağlı)* |
+| `REPORT_NOTIFY_EMAIL` | Yeni şikâyet bildirim adresi | `yatdice@gmail.com` *(SMTP ayarlıysa)* |
 | `APPLE_CLIENT_IDS` | Sign in with Apple için bundle id listesi | *(Boşsa Apple girişi kapalı)* |
 | `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Hesap silinince Apple yetkisini geri almak için | *(Apple girişi açıksa gerekli)* |
 | `ADMIN_TOKEN` | `/admin` paneli anahtarı, en az 32 karakter | *(Boşsa panel kapalı)* |
-| `LEGAL_OWNER_NAME`, `LEGAL_CONTACT_EMAIL` | Hukuk metinlerindeki sahip ve iletişim bilgisi | *(Üretimde gerekli)* |
+| `LEGAL_OWNER_NAME`, `LEGAL_CONTACT_EMAIL` | Hukuk metinlerindeki sahip ve iletişim bilgisi | Destek adresi varsayılan olarak `yatdice@gmail.com` |
 | `VITE_API_URL` | Frontend'in bağlanacağı HTTP API adresi | Geliştirmede boş (sayfanın adresi kullanılır), üretimde `https://backend-adresin` |
 | `VITE_WS_URL` | Frontend'in bağlanacağı WebSocket adresi | Geliştirmede boş (sayfanın adresi kullanılır), üretimde `wss://backend-adresin` |
 | `VITE_GOOGLE_CLIENT_ID` | Web ve Android Google girişi için web istemci kimliği | *(Boşsa buton gizli)* |

@@ -143,7 +143,7 @@ export const EN: Record<string, string> = {
   "Kullanım Koşulları": "Terms of Use",
   "Web'den Hesap Silme": "Delete Account on the Web",
   "✉️ İletişim & Destek": "✉️ Contact & Support",
-  "Soru, hata bildirimi, şikâyet veya veri talepleriniz için destek sayfasındaki e-posta adresinden bize ulaşabilirsiniz.": "For questions, bug reports, complaints or data requests, reach us at the email address on the support page.",
+  "Soru, hata bildirimi, şikâyet veya veri talepleriniz için bize yazın:": "For questions, bug reports, complaints or data requests, email us at:",
   "Destek ve İletişim": "Support & Contact",
   "Açık Kaynak Lisansları": "Open Source Licenses",
   "{0} adlı oyuncunun profil fotoğrafını veya kullanıcı adını uygunsuz içerik olarak şikâyet etmek istiyor musun?": "Report {0}'s profile photo or username as inappropriate?",

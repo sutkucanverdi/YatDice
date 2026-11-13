@@ -45,6 +45,11 @@ export async function nativeAppleLogin(): Promise<{ credential: string; authoriz
 }
 
 export function openExternal(url: string): void {
+  // E-posta bağlantıları telefonun posta uygulamasında açılır
+  if (url.startsWith("mailto:")) {
+    window.location.href = url;
+    return;
+  }
   if (IS_NATIVE) {
     void Browser.open({ url });
   } else {

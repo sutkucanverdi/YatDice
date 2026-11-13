@@ -2685,9 +2685,8 @@ func main() {
 
 	if !isDevelopment() {
 		for key, warning := range map[string]string{
-			"SMTP_HOST":           "şifre sıfırlama e-postaları gönderilemez",
-			"ADMIN_TOKEN":         "moderasyon paneli kapalı kalır",
-			"LEGAL_CONTACT_EMAIL": "hukuk metinlerinde iletişim adresi görünmez",
+			"SMTP_HOST":   "şifre sıfırlama e-postaları gönderilemez",
+			"ADMIN_TOKEN": "moderasyon paneli kapalı kalır",
 		} {
 			if strings.TrimSpace(os.Getenv(key)) == "" {
 				log.Printf("⚠️ %s tanımlı değil: %s.", key, warning)

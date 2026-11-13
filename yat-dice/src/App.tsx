@@ -37,6 +37,7 @@ function pageUrl(path: string): string {
 }
 // Mağaza sürümüyle (versionName / MARKETING_VERSION) aynı tutulmalı
 const APP_VERSION = "1.0.0";
+const SUPPORT_EMAIL = "yatdice@gmail.com";
 const APP_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
 // ─── Web Audio API Ses Efekt Motoru (Harici MP3 Gerektirmez) ──────────────────
@@ -877,7 +878,8 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>{t("✉️ İletişim & Destek")}</p>
-                {t("Soru, hata bildirimi, şikâyet veya veri talepleriniz için destek sayfasındaki e-posta adresinden bize ulaşabilirsiniz.")}
+                {t("Soru, hata bildirimi, şikâyet veya veri talepleriniz için bize yazın:")}{" "}
+                <a href={`mailto:${SUPPORT_EMAIL}`} onClick={event => { event.preventDefault(); openExternal(`mailto:${SUPPORT_EMAIL}`); }} style={{ color: c.accent, fontWeight: 700 }}>{SUPPORT_EMAIL}</a>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
                   <ExternalLink path="/support" color={c.accent}>{t("Destek ve İletişim")}</ExternalLink>
                   <button type="button" onClick={toggleLicenses} style={{ background: "none", border: "none", padding: 0, color: c.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}>
@@ -4143,7 +4145,7 @@ function SettingsScreen({
 
       {section(t("Yasal ve Destek"), <>
         {row(t("Gizlilik, EULA ve Kasa Olasılıkları"), chevron, { onClick: () => setShowLegal(true) })}
-        {row(t("Destek ve İletişim"), chevron, { onClick: () => openExternal(pageUrl("/support")) })}
+        {row(t("Destek ve İletişim"), chevron, { sub: SUPPORT_EMAIL, onClick: () => openExternal(pageUrl("/support")) })}
         {row(t("Gizlilik Politikası"), chevron, { onClick: () => openExternal(pageUrl("/privacy")) })}
         {row(t("Kullanım Koşulları"), chevron, { onClick: () => openExternal(pageUrl("/terms")), last: true })}
       </>)}

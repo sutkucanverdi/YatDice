@@ -239,3 +239,12 @@ func TestSupportPageShowsContact(t *testing.T) {
 		t.Fatalf("support page lacks contact: %s", recorder.Body)
 	}
 }
+
+func TestSupportEmailDefault(t *testing.T) {
+	t.Setenv("LEGAL_CONTACT_EMAIL", "")
+	recorder := httptest.NewRecorder()
+	handlePrivacyHTML(recorder, httptest.NewRequest(http.MethodGet, "/privacy", nil))
+	if !strings.Contains(recorder.Body.String(), "mailto:yatdice@gmail.com") {
+		t.Fatal("privacy page does not show the default support email")
+	}
+}

@@ -727,9 +727,19 @@ document.getElementById('load').onclick=load;
 
 // ─── GİZLİLİK POLİTİKASI VE KULLANIM KOŞULLARI ────────────────────────────────
 
+// Destek adresi; LEGAL_CONTACT_EMAIL ile değiştirilebilir.
+const defaultSupportEmail = "yatdice@gmail.com"
+
+func supportEmail() string {
+	if contact := strings.TrimSpace(os.Getenv("LEGAL_CONTACT_EMAIL")); contact != "" {
+		return contact
+	}
+	return defaultSupportEmail
+}
+
 func legalContactHTML(r *http.Request) string {
 	owner := strings.TrimSpace(os.Getenv("LEGAL_OWNER_NAME"))
-	contact := strings.TrimSpace(os.Getenv("LEGAL_CONTACT_EMAIL"))
+	contact := supportEmail()
 	if owner == "" {
 		owner = L(r, "Yat Dice geliştiricisi")
 	}
