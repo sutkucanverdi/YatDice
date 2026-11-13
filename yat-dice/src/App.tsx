@@ -1338,6 +1338,21 @@ function HomeScreen({
 }) {
   const c = C(dark);
   const [joinCode, setJoinCode] = useState("");
+  // Uzun süre rakip bulunamazsa bota karşı oynama önerilir; tek başına deneyen oyuncu beklemede kalmaz.
+  const [searchSlow, setSearchSlow] = useState(false);
+  const [botAfterCancel, setBotAfterCancel] = useState(false);
+  useEffect(() => {
+    setSearchSlow(false);
+    if (!isSearching || createdRoomCode) return;
+    const timer = setTimeout(() => setSearchSlow(true), 15000);
+    return () => clearTimeout(timer);
+  }, [isSearching, createdRoomCode]);
+  useEffect(() => {
+    if (botAfterCancel && !isSearching) {
+      setBotAfterCancel(false);
+      connectToServer("BOT_MATCH");
+    }
+  }, [botAfterCancel, isSearching, connectToServer]);
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(nameOf(profile.name));
   const [tempAvatar, setTempAvatar] = useState(profile.avatar || "");
@@ -1737,6 +1752,17 @@ function HomeScreen({
             </motion.button>
           )}
         </div>
+
+        {searchSlow && isSearching && !createdRoomCode && (
+          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} role="status"
+            style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:12 }}>
+            <span style={{ flex:1, fontSize:12, color:c.textSub, lineHeight:1.4 }}>{t("Şu an çevrimiçi rakip az. Beklerken bota karşı oynayabilirsin.")}</span>
+            <button type="button" onClick={() => { cancelMatchmaking(); setBotAfterCancel(true); }}
+              style={{ padding:"8px 12px", background:c.accent, color:dark?c.bg:"#fff", border:"none", borderRadius:10, fontSize:12, fontWeight:800, cursor:"pointer", whiteSpace:"nowrap" }}>
+              🤖 {t("Bota Karşı Oyna")}
+            </button>
+          </motion.div>
+        )}
 
         <div style={{ display:"flex", alignItems:"center", gap:8, margin:"16px 0" }}>
             <div style={{flex:1, height:1, background:c.border}}></div>

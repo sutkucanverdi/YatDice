@@ -173,6 +173,8 @@ npx cap sync
 - **iOS:** Mac üzerinde `npx cap open ios` ile Xcode'u açın. **Signing & Capabilities** bölümüne **Sign in with Apple** ekleyin. Google girişi için `Info.plist` içine ters çevrilmiş iOS istemci kimliğini URL scheme olarak ekleyin.
 - **Sunucu:** `ALLOWED_ORIGIN` değerine web adresinizle birlikte `capacitor://localhost,https://localhost` ekleyin. `GOOGLE_CLIENT_ID` web ve iOS kimliklerini, `APPLE_CLIENT_IDS` ise bundle id'yi içermelidir.
 - **Yerel HTTP testi:** Yalnızca geliştirme için `CAP_DEV_HTTP=1 npx cap sync android` kullanın; mağaza build'inde kullanmayın.
+- **İnceleme demo hesapları:** Sunucu canlıya alındıktan sonra `cd yat-dice && node scripts/create-demo-accounts.mjs https://api.alanadiniz.com` çalıştırın. Komut iki hesap açar, onları arkadaş yapar ve bilgileri `review-demo-accounts.local` dosyasına yazar (git'e girmez). Bu bilgileri App Store Connect'te **App Review Information → Sign-in required** alanına ve Google Play'de **App access** bölümüne girin.
+- **Şifre sıfırlama:** Kodlar e-postayla gider; canlı sunucuda `SMTP_*` değişkenleri tanımlı değilse istek, destek adresini gösteren bir hata döner.
 
 ---
 

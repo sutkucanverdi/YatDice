@@ -99,15 +99,16 @@ var enMessages = map[string]string{
 	"Hesap silinirken sunucu hatası oluştu":                                            "A server error occurred while deleting the account",
 
 	// Şifre sıfırlama
-	"Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi.": "If the details match an account, a verification code has been sent to your email.",
-	"Geçersiz kullanıcı veya sıfırlama kodu":                                      "Invalid user or reset code",
-	"Sıfırlama kodu hatalı!":                                                      "Wrong reset code!",
-	"Sıfırlama kodunun süresi dolmuş veya geçersiz":                               "The reset code has expired or is invalid",
-	"Çok fazla hatalı kod denemesi. Yeni kod talep edin.":                         "Too many wrong codes. Please request a new one.",
-	"Yeni şifre en az 6 karakter olmalıdır":                                       "New password must be at least 6 characters",
-	"Şifre güncellenemedi":                                                        "Could not update the password",
-	"Şifreniz başarıyla güncellendi! Şimdi giriş yapabilirsiniz.":                 "Your password was updated! You can sign in now.",
-	"Yat Dice şifre sıfırlama kodu":                                               "Your Yat Dice password reset code",
+	"Şifre sıfırlama e-postası şu an gönderilemiyor. Lütfen %s adresinden bize yazın.": "Password reset emails can't be sent right now. Please email us at %s.",
+	"Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi.":      "If the details match an account, a verification code has been sent to your email.",
+	"Geçersiz kullanıcı veya sıfırlama kodu":                                           "Invalid user or reset code",
+	"Sıfırlama kodu hatalı!":                                      "Wrong reset code!",
+	"Sıfırlama kodunun süresi dolmuş veya geçersiz":               "The reset code has expired or is invalid",
+	"Çok fazla hatalı kod denemesi. Yeni kod talep edin.":         "Too many wrong codes. Please request a new one.",
+	"Yeni şifre en az 6 karakter olmalıdır":                       "New password must be at least 6 characters",
+	"Şifre güncellenemedi":                                        "Could not update the password",
+	"Şifreniz başarıyla güncellendi! Şimdi giriş yapabilirsiniz.": "Your password was updated! You can sign in now.",
+	"Yat Dice şifre sıfırlama kodu":                               "Your Yat Dice password reset code",
 	"Yat Dice şifre sıfırlama kodunuz: %s\n\nKod 10 dakika geçerlidir. Bu isteği siz yapmadıysanız e-postayı yok sayın.": "Your Yat Dice password reset code: %s\n\nThe code is valid for 10 minutes. If you did not request this, you can ignore this email.",
 
 	// Profil, ödüller, mağaza

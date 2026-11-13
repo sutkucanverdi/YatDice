@@ -3129,6 +3129,12 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// E-posta gönderimi kurulmamışsa kod kimseye ulaşamaz; kullanıcı boşuna beklemesin, destek adresine yönlendirilsin.
+	if !emailConfigured() && !isDevelopment() {
+		httpError(w, r, Lf(r, "Şifre sıfırlama e-postası şu an gönderilemiyor. Lütfen %s adresinden bize yazın.", supportEmail()), http.StatusServiceUnavailable)
+		return
+	}
+
 	resp := map[string]interface{}{
 		"message": L(r, "Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi."),
 	}

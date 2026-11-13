@@ -398,6 +398,8 @@ export const EN: Record<string, string> = {
   "Bu masa için en az {0} 🪙 jeton gerekli!": "This table needs at least {0} 🪙!",
   "Oyna": "Play",
   "Yakında": "Soon",
+  "Şu an çevrimiçi rakip az. Beklerken bota karşı oynayabilirsin.": "Few players are online right now. You can play against a bot instead.",
+  "Bota Karşı Oyna": "Play vs Bot",
   "Anasayfa": "Home",
   "Görevler": "Quests",
   "Arkadaşlar": "Friends",
