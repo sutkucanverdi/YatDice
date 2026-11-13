@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
@@ -112,15 +113,37 @@ type Client struct {
 	Disconnected bool // Room.Mu ile korunur: bağlantı koptu, geri dönüş bekleniyor
 }
 
-var profanityList = []string{
-	"aptal", "salak", "gerizekalı", "küfür", "amk", "aq", "sik", "orospu", "piç", "yavşak", "göt", "ibne", "fuck", "shit", "bitch", "asshole", "dick", "cunt",
+// Kelimenin başında aranır; ekli halleri de yakalanır ("salaksın", "siktir")
+var profanityPrefixes = []string{
+	"aptal", "salak", "gerizekal", "orospu", "piç", "yavşak", "ibne", "sik", "amına", "amcık",
+	"fuck", "shit", "bitch", "asshole", "cunt",
+}
+
+// Yalnızca kelimenin tamamı eşleşirse sayılır; "götürmek" veya "klasik" gibi masum kelimeler etkilenmez
+var profanityWords = map[string]bool{
+	"amk": true, "aq": true, "göt": true, "götü": true, "götün": true, "götüne": true, "götünü": true, "götüm": true, "dick": true,
+}
+
+// Kullanıcı adlarında bitişik yazımı da yakalamak için her yerde aranır
+var usernameProfanity = []string{
+	"aptal", "salak", "gerizekal", "orospu", "yavşak", "siktir", "amcık", "fuck", "bitch", "asshole", "cunt",
+}
+
+func profanityTokens(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
 }
 
 func containsProfanity(s string) bool {
-	lower := strings.ToLower(s)
-	for _, bw := range profanityList {
-		if strings.Contains(lower, bw) {
+	for _, token := range profanityTokens(s) {
+		if profanityWords[token] {
 			return true
+		}
+		for _, prefix := range profanityPrefixes {
+			if strings.HasPrefix(token, prefix) {
+				return true
+			}
 		}
 	}
 	return false
@@ -128,7 +151,16 @@ func containsProfanity(s string) bool {
 
 // Kullanıcı adı küfür içeremez ve sistem botunu taklit edemez
 func isForbiddenUsername(s string) bool {
-	return containsProfanity(s) || strings.Contains(strings.ToLower(s), "yatbot")
+	if containsProfanity(s) {
+		return true
+	}
+	lower := strings.ToLower(s)
+	for _, word := range usernameProfanity {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "yatbot")
 }
 
 func sanitizeChatMessage(raw string) string {
@@ -2559,6 +2591,7 @@ func main() {
 	http.HandleFunc("/admin/action", handleAdminAction)
 	http.HandleFunc("/privacy", handlePrivacyHTML)
 	http.HandleFunc("/terms", handleTermsHTML)
+	http.HandleFunc("/support", handleSupportHTML)
 	http.HandleFunc("/leaderboard", handleLeaderboard)
 	http.HandleFunc("/health", handleHealth)
 	http.HandleFunc("/play", handleConnections)

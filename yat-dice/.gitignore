@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Derleme sırasında üretilir
+public/licenses.txt

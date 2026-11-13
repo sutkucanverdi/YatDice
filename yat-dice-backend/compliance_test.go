@@ -187,3 +187,55 @@ func TestWebDeletionRequestDoesNotRevealAccount(t *testing.T) {
 		t.Fatalf("got %d: %s", recorder.Code, recorder.Body)
 	}
 }
+
+func TestAdminClearsReportedAvatar(t *testing.T) {
+	openTestDB(t)
+	token := strings.Repeat("b", minAdminTokenLength)
+	t.Setenv("ADMIN_TOKEN", token)
+	suffix := time.Now().UnixNano()
+	reporter := insertTestUser(t, fmt.Sprintf("avA%d", suffix))
+	target := insertTestUser(t, fmt.Sprintf("avB%d", suffix))
+	const avatar = "data:image/png;base64,AAAA"
+	if _, err := db.Exec(`INSERT INTO profiles (user_id, avatar) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET avatar = $2`, target, avatar); err != nil {
+		t.Fatal(err)
+	}
+	var reportID int
+	if err := db.QueryRow(`INSERT INTO user_reports (reporter_id, reported_user_id, reported_username, reason) VALUES ($1, $2, 'x', 'foto') RETURNING id`, reporter, target).Scan(&reportID); err != nil {
+		t.Fatal(err)
+	}
+
+	queue := httptest.NewRequest(http.MethodGet, "/admin/queue", nil)
+	queue.Header.Set("X-Admin-Token", token)
+	recorder := httptest.NewRecorder()
+	handleAdminQueue(recorder, queue)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), avatar) {
+		t.Fatalf("queue %d does not show the avatar: %s", recorder.Code, recorder.Body)
+	}
+
+	body := fmt.Sprintf(`{"kind":"report","id":%d,"action":"clear_avatar"}`, reportID)
+	action := httptest.NewRequest(http.MethodPost, "/admin/action", strings.NewReader(body))
+	action.Header.Set("X-Admin-Token", token)
+	recorder = httptest.NewRecorder()
+	handleAdminAction(recorder, action)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("clear_avatar failed %d: %s", recorder.Code, recorder.Body)
+	}
+	var stored, status string
+	_ = db.QueryRow(`SELECT avatar FROM profiles WHERE user_id = $1`, target).Scan(&stored)
+	_ = db.QueryRow(`SELECT status FROM user_reports WHERE id = $1`, reportID).Scan(&status)
+	if stored != "" || status != "content_removed" {
+		t.Fatalf("avatar %q, report status %q", stored, status)
+	}
+	if isUserBanned(target) {
+		t.Fatal("removing a photo must not ban the account")
+	}
+}
+
+func TestSupportPageShowsContact(t *testing.T) {
+	t.Setenv("LEGAL_CONTACT_EMAIL", "destek@example.com")
+	recorder := httptest.NewRecorder()
+	handleSupportHTML(recorder, httptest.NewRequest(http.MethodGet, "/support", nil))
+	if !strings.Contains(recorder.Body.String(), "mailto:destek@example.com") {
+		t.Fatalf("support page lacks contact: %s", recorder.Body)
+	}
+}

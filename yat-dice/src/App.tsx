@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Sun, Moon, ShoppingBag, Users, Zap, Trophy,
   RotateCcw, Crown, Check, Lock,
-  Home, TrendingUp, Edit3, X, ChevronLeft
+  Home, TrendingUp, Edit3, X, ChevronLeft, Flag
 } from "lucide-react";
 import {
   APPLE_AVAILABLE, GOOGLE_AVAILABLE, IS_NATIVE, haptic, minimizeApp, nativeAppleLogin, nativeGoogleLogin,
@@ -769,6 +769,16 @@ function getOrCreateDeviceId(): string {
 
 function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => void; dark: boolean }) {
   const c = C(dark);
+  const [licenseText, setLicenseText] = useState<string | null>(null);
+  const toggleLicenses = async () => {
+    if (licenseText !== null) { setLicenseText(null); return; }
+    try {
+      const res = await fetch("./licenses.txt");
+      setLicenseText(res.ok ? await res.text() : "Lisans listesi yüklenemedi.");
+    } catch {
+      setLicenseText("Lisans listesi yüklenemedi.");
+    }
+  };
   return (
     <AnimatePresence>
       {open && (
@@ -789,7 +799,7 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
             <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, fontSize: 11.5, color: c.textSub, lineHeight: 1.55 }}>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>⚖️ Sanal Jeton & Kumar Yasağı Beyanı (No Gambling)</p>
-                Yat Dice tamamen beceri ve stratejiye dayalı eğlence amaçlı bir oyundur. Oyun içindeki tüm <b>Jetonlar (🪙)</b> ve <b>Kasalar (📦)</b> yalnızca sanal oyun içi puandır; <b>gerçek parayla satın alınamaz, gerçek paraya, kripto varlığa veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</b>
+                Yat Dice, şans ve stratejiye dayalı, eğlence amaçlı bir zar oyunudur. Oyun içindeki tüm <b>Jetonlar (🪙)</b> ve <b>Kasalar (📦)</b> yalnızca sanal oyun içi puandır; <b>gerçek parayla satın alınamaz, gerçek paraya, kripto varlığa veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</b>
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>📦 Kasa (Loot Box) Olasılık Bildirimi</p>
@@ -800,16 +810,29 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🛡️ Topluluk Kuralları (UGC) & Sıfır Tolerans</p>
-                Oyun içi sohbette küfür, hakaret, taciz ve nefret söylemine karşı <b>sıfır tolerans</b> uygulanır. Uygunsuz mesajlar otomatik filtrelenir; oyuncular maç esnasında rakiplerini anında <b>Susturup / Engelleyebilir (Block)</b> veya <b>Şikayet Edebilir (Report)</b>.
+                Oyun içi sohbette küfür, hakaret, taciz ve nefret söylemine karşı <b>sıfır tolerans</b> uygulanır. Uygunsuz mesajlar otomatik filtrelenir; oyuncular maç esnasında rakiplerini anında <b>Susturup / Engelleyebilir (Block)</b> veya <b>Şikayet Edebilir (Report)</b>. Uygunsuz profil fotoğrafı veya kullanıcı adı, liderlik tablosundaki bayrak simgesiyle bildirilebilir. Şikâyetler incelenir; ihlal eden içerik kaldırılır ve hesaplar kapatılabilir.
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
                 <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)</p>
-                Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı <b>Profili Özelleştir &rarr; Hesabımı Kalıcı Olarak Sil</b> menüsünden silebilirsiniz.
+                Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı <b>Profili Özelleştir &rarr; Hesabımı ve Verilerimi Kalıcı Olarak Sil</b> adımından silebilirsiniz.
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
                   <ExternalLink path="/privacy" color={c.accent}>Gizlilik Politikası</ExternalLink>
                   <ExternalLink path="/terms" color={c.accent}>Kullanım Koşulları</ExternalLink>
                   <ExternalLink path="/account/delete" color={c.accent}>Web'den Hesap Silme</ExternalLink>
                 </div>
+              </div>
+              <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>✉️ İletişim & Destek</p>
+                Soru, hata bildirimi, şikâyet veya veri talepleriniz için destek sayfasındaki e-posta adresinden bize ulaşabilirsiniz.
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+                  <ExternalLink path="/support" color={c.accent}>Destek ve İletişim</ExternalLink>
+                  <button type="button" onClick={toggleLicenses} style={{ background: "none", border: "none", padding: 0, color: c.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}>
+                    Açık Kaynak Lisansları
+                  </button>
+                </div>
+                {licenseText !== null && (
+                  <pre style={{ marginTop: 10, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 10, background: c.panelAlt, padding: 10, borderRadius: 8, color: c.textSub }}>{licenseText}</pre>
+                )}
               </div>
             </div>
           </motion.div>
@@ -889,6 +912,24 @@ type ResumeState = {
 };
 type ResumedMatch = { playerIndex: number; opponentName: string; betAmount: number; state: ResumeState };
 type BlockedUser = { userId: number; username: string };
+
+// Liderlik tablosundaki uygunsuz profil fotoğrafı veya kullanıcı adını moderasyona bildirir
+async function reportProfile(username: string) {
+  if (!window.confirm(`${username} adlı oyuncunun profil fotoğrafını veya kullanıcı adını uygunsuz içerik olarak şikâyet etmek istiyor musun?`)) return;
+  try {
+    const res = await fetch(`${API_BASE}/ugc/report`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "")
+      },
+      body: JSON.stringify({ username, reason: "Uygunsuz profil fotoğrafı veya kullanıcı adı" })
+    });
+    window.alert(res.ok ? "Şikâyetin moderasyon ekibine iletildi." : "Şikâyet gönderilemedi. Lütfen tekrar dene.");
+  } catch {
+    window.alert("Şikâyet gönderilemedi. Lütfen tekrar dene.");
+  }
+}
 
 function ExternalLink({ path, color, children }: { path: string; color: string; children: React.ReactNode }) {
   return (
@@ -1769,9 +1810,22 @@ function HomeScreen({
                             </p>
                           </div>
                         </div>
-                        <div style={{ textAlign: "right" }}>
-                          <p style={{ fontSize: 13, fontWeight: 800, color: c.accent, margin: 0 }}>{item.wins} Galibiyet</p>
-                          <p style={{ fontSize: 10, color: c.gold, fontWeight: 700, margin: 0 }}>{item.xp} XP</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ textAlign: "right" }}>
+                            <p style={{ fontSize: 13, fontWeight: 800, color: c.accent, margin: 0 }}>{item.wins} Galibiyet</p>
+                            <p style={{ fontSize: 10, color: c.gold, fontWeight: 700, margin: 0 }}>{item.xp} XP</p>
+                          </div>
+                          {!isMe && (
+                            <button
+                              type="button"
+                              aria-label={`${item.username} profilini şikâyet et`}
+                              title="Profili şikâyet et"
+                              onClick={() => reportProfile(item.username)}
+                              style={{ background: "none", border: "none", padding: 4, color: c.textSub, cursor: "pointer", display: "flex" }}
+                            >
+                              <Flag size={14} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

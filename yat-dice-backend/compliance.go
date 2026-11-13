@@ -558,7 +558,7 @@ func handleAdminPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:")
 	_, _ = w.Write([]byte(adminPageHTML))
 }
 
@@ -577,6 +577,7 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 		Username  string          `json:"username"`
 		Reason    string          `json:"reason"`
 		Evidence  json.RawMessage `json:"evidence"`
+		Avatar    string          `json:"avatar"`
 		CreatedAt time.Time       `json:"createdAt"`
 	}
 	type deletionItem struct {
@@ -589,8 +590,9 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 
 	reports := []reportItem{}
 	rows, err := db.Query(`
-		SELECT id, reported_username, reason, COALESCE(NULLIF(evidence, ''), '[]'), created_at
-		FROM user_reports WHERE status = 'open' ORDER BY id LIMIT 100
+		SELECT r.id, r.reported_username, r.reason, COALESCE(NULLIF(r.evidence, ''), '[]'), COALESCE(p.avatar, ''), r.created_at
+		FROM user_reports r LEFT JOIN profiles p ON p.user_id = r.reported_user_id
+		WHERE r.status = 'open' ORDER BY r.id LIMIT 100
 	`)
 	if err != nil {
 		http.Error(w, "Kuyruk alınamadı", http.StatusInternalServerError)
@@ -600,7 +602,7 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item reportItem
 		var evidence string
-		if rows.Scan(&item.ID, &item.Username, &item.Reason, &evidence, &item.CreatedAt) == nil {
+		if rows.Scan(&item.ID, &item.Username, &item.Reason, &evidence, &item.Avatar, &item.CreatedAt) == nil {
 			item.Evidence = json.RawMessage(evidence)
 			reports = append(reports, item)
 		}
@@ -659,6 +661,16 @@ func handleAdminAction(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_, err = db.Exec(`UPDATE user_reports SET status = 'banned', resolved_at = NOW() WHERE id = $1 OR (status = 'open' AND reported_user_id = $2)`, req.ID, targetID)
 		}
+	case req.Kind == "report" && req.Action == "clear_avatar":
+		// Uygunsuz profil fotoğrafını kaldırır; hesap açık kalır
+		var targetID sql.NullInt64
+		err = db.QueryRow(`SELECT reported_user_id FROM user_reports WHERE id = $1 AND status = 'open'`, req.ID).Scan(&targetID)
+		if err == nil && targetID.Valid {
+			_, err = db.Exec(`UPDATE profiles SET avatar = '' WHERE user_id = $1`, targetID.Int64)
+		}
+		if err == nil {
+			_, err = db.Exec(`UPDATE user_reports SET status = 'content_removed', resolved_at = NOW() WHERE id = $1`, req.ID)
+		}
 	case req.Kind == "report" && req.Action == "dismiss":
 		_, err = db.Exec(`UPDATE user_reports SET status = 'dismissed', resolved_at = NOW() WHERE id = $1`, req.ID)
 	case req.Kind == "deletion" && req.Action == "delete":
@@ -709,7 +721,7 @@ const status=t=>document.getElementById('status').textContent=t;
 async function act(kind,id,action,label){if(!confirm(label+'?'))return;const r=await fetch('/admin/action',{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Token':token()},body:JSON.stringify({kind,id,action})});status(r.ok?'Tamamlandı':'Hata: '+r.status);load()}
 function button(text,cls,fn){const b=el('button',text,cls);b.onclick=fn;return b}
 async function load(){const r=await fetch('/admin/queue',{headers:{'X-Admin-Token':token()}});if(!r.ok){status('Yetkisiz veya hata: '+r.status);return}const d=await r.json();status(d.reports.length+' şikâyet, '+d.deletions.length+' silme talebi');
-const rs=document.getElementById('reports');rs.replaceChildren();d.reports.forEach(x=>{const c=el('div',undefined,'card');c.append(el('strong',x.username),el('p',x.reason),el('p',new Date(x.createdAt).toLocaleString('tr-TR'),'muted'));const l=el('ul');(x.evidence||[]).forEach(m=>l.append(el('li',new Date(m.at).toLocaleTimeString('tr-TR')+' — '+m.text)));if(!(x.evidence||[]).length)c.append(el('p','Sohbet kaydı yok','muted'));c.append(l,button('Hesabı Kapat','danger',()=>act('report',x.id,'ban','Hesap kapatılsın')),button('Reddet','',()=>act('report',x.id,'dismiss','Şikâyet reddedilsin')));rs.append(c)});
+const rs=document.getElementById('reports');rs.replaceChildren();d.reports.forEach(x=>{const c=el('div',undefined,'card');c.append(el('strong',x.username),el('p',x.reason));if((x.avatar||'').startsWith('data:image/')){const i=el('img');i.src=x.avatar;i.alt='Profil fotoğrafı';i.style.cssText='width:96px;height:96px;object-fit:cover;border-radius:12px;display:block';c.append(i,button('Fotoğrafı Kaldır','',()=>act('report',x.id,'clear_avatar','Profil fotoğrafı kaldırılsın')))}c.append(el('p',new Date(x.createdAt).toLocaleString('tr-TR'),'muted'));const l=el('ul');(x.evidence||[]).forEach(m=>l.append(el('li',new Date(m.at).toLocaleTimeString('tr-TR')+' — '+m.text)));if(!(x.evidence||[]).length)c.append(el('p','Sohbet kaydı yok','muted'));c.append(l,button('Hesabı Kapat','danger',()=>act('report',x.id,'ban','Hesap kapatılsın')),button('Reddet','',()=>act('report',x.id,'dismiss','Şikâyet reddedilsin')));rs.append(c)});
 const ds=document.getElementById('deletions');ds.replaceChildren();d.deletions.forEach(x=>{const c=el('div',undefined,'card');c.append(el('strong',x.username),el('p',(x.email||'E-posta yok')+(x.emailMatch?' — hesapla eşleşiyor':' — eşleşmiyor'),'muted'),button('Hesabı Sil','danger',()=>act('deletion',x.id,'delete','Hesap silinsin')),button('Reddet','',()=>act('deletion',x.id,'dismiss','Talep reddedilsin')));ds.append(c)})}
 document.getElementById('load').onclick=load;
 </script></body></html>`
@@ -744,6 +756,19 @@ func handleTermsHTML(w http.ResponseWriter, r *http.Request) {
 	writeLegalPage(w, "Kullanım Koşulları", strings.ReplaceAll(termsOfUseHTML, "{{CONTACT}}", legalContactHTML()))
 }
 
+// GET /support : Mağazalarda destek adresi olarak da kullanılır
+func handleSupportHTML(w http.ResponseWriter, r *http.Request) {
+	writeLegalPage(w, "Destek", strings.ReplaceAll(supportHTML, "{{CONTACT}}", legalContactHTML()))
+}
+
+const supportHTML = `<p>Soru, hata bildirimi, şikâyet veya veri talepleriniz için bize e-postayla ulaşabilirsiniz:</p>
+<p>{{CONTACT}}</p>
+<h2>Sık Sorulanlar</h2>
+<p><strong>Bir oyuncuyu nasıl şikâyet ederim?</strong> Maç sırasında sohbet menüsünden veya liderlik tablosundaki bayrak simgesinden şikâyet edebilir, oyuncuyu engelleyebilirsiniz.</p>
+<p><strong>Hesabımı nasıl silerim?</strong> Uygulamada <strong>Profili Özelleştir → Hesabımı ve Verilerimi Kalıcı Olarak Sil</strong> adımını veya <a href="/account/delete">web'den hesap silme sayfasını</a> kullanın.</p>
+<p><strong>Jetonlar gerçek parayla alınabilir mi?</strong> Hayır. Jeton ve kasalar yalnızca oyun içi sanal öğelerdir; satın alınamaz ve paraya çevrilemez.</p>
+<p><a href="/privacy">Gizlilik Politikası</a> · <a href="/terms">Kullanım Koşulları</a></p>`
+
 const privacyPolicyHTML = `<p><strong>Son güncelleme:</strong> Kasım 2026</p>
 <h2>1. Veri Sorumlusu</h2><p>{{CONTACT}}</p>
 <h2>2. İşlenen Veriler</h2><ul>
@@ -753,7 +778,7 @@ const privacyPolicyHTML = `<p><strong>Son güncelleme:</strong> Kasım 2026</p>
 <li><strong>Sosyal veriler:</strong> arkadaşlıklar, oyun davetleri, engeller ve şikâyet kayıtları.</li>
 <li><strong>Sohbet:</strong> mesajlar kalıcı olarak kaydedilmez. Şikâyet incelemesi için son mesajlar en fazla 30 dakika bellekte tutulur; şikâyet edilirse şikâyet edilen oyuncunun bu mesajları şikâyet kaydına eklenir.</li>
 <li><strong>Teknik veriler:</strong> IP adresi güvenlik ve hız sınırlaması için işlenir; barındırma sağlayıcısının sistem kayıtlarında geçici olarak bulunabilir.</li></ul>
-<h2>3. Amaçlar ve Hukuki Sebepler</h2><p>Veriler hesabı ve oyunu sunmak, eşleştirme ve sosyal özellikleri çalıştırmak, şifre kurtarmak, kötüye kullanımı önlemek ve yasal yükümlülükleri yerine getirmek için işlenir. Hukuki sebepler sözleşmenin ifası, meşru menfaat ve gerektiğinde açık rızadır.</p>
+<h2>3. Toplama Yöntemi, Amaçlar ve Hukuki Sebepler</h2><p>Veriler, uygulama ve web sitesi üzerinden elektronik ortamda; sizin girdiğiniz bilgilerle, seçtiğiniz giriş sağlayıcısından (Google veya Apple) gelen bilgilerle ve oyunu oynarken otomatik yollarla toplanır. Veriler hesabı ve oyunu sunmak, eşleştirme ve sosyal özellikleri çalıştırmak, şifre kurtarmak, kötüye kullanımı önlemek ve yasal yükümlülükleri yerine getirmek için işlenir. Hukuki sebepler sözleşmenin ifası, meşru menfaat ve gerektiğinde açık rızadır.</p>
 <h2>4. Paylaşım</h2><p>Veriler satılmaz ve reklam amacıyla paylaşılmaz. Hizmet için gerekli ölçüde barındırma ve veritabanı sağlayıcıları, e-posta gönderim sağlayıcısı ve kullandığınız giriş yöntemine göre Google veya Apple ile paylaşılabilir. Bu sağlayıcılar yurt dışında bulunabilir. Kullanıcı adı, avatar, ülke ve oyun istatistikleri diğer oyunculara görünür.</p>
 <h2>5. Saklama Süreleri</h2><p>Hesap verileri hesap silinene kadar saklanır. Çözülmemiş şikâyetler çözülene kadar, çözülen şikâyetler en fazla 90 gün saklanır. Kapatılan hesapların kötüye kullanımın tekrarını önlemek için gerekli kayıtları saklanabilir.</p>
 <h2>6. Haklarınız</h2><p>KVKK ve GDPR kapsamında verilerinize erişme, düzeltme, silme, işlemeyi kısıtlama, itiraz etme ve veri taşınabilirliği haklarına sahip olabilirsiniz. Başvurularınızı aşağıdaki iletişim adresine iletebilir, yetkili veri koruma kurumuna şikâyette bulunabilirsiniz.</p>

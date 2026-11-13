@@ -209,9 +209,23 @@ func TestWSMessageBudget(t *testing.T) {
 }
 
 func TestIsForbiddenUsername(t *testing.T) {
-	for name, want := range map[string]bool{"🤖 YatBot": true, "yatbot_tr": true, "fuck": true, "Ada": false} {
+	for name, want := range map[string]bool{
+		"🤖 YatBot": true, "yatbot_tr": true, "fuck": true, "SalakAdam": true, "Oyuncu_Orospu": true,
+		"Ada": false, "KlasikOyuncu": false, "Götürücü": false,
+	} {
 		if got := isForbiddenUsername(name); got != want {
 			t.Errorf("%q: got %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestContainsProfanity(t *testing.T) {
+	for text, want := range map[string]bool{
+		"salaksın sen": true, "siktir git": true, "AMK": true, "göt!": true, "aq.": true,
+		"maçı götürdüm": false, "klasik açılış": false, "aqua renk": false, "iyi oyundu": false, "Dickens okudum": false,
+	} {
+		if got := containsProfanity(text); got != want {
+			t.Errorf("%q: got %v, want %v", text, got, want)
 		}
 	}
 }
