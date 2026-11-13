@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -148,16 +149,16 @@ func createProviderUser(providerColumn, providerID, email, displayName string) (
 		baseName = strings.Split(email, "@")[0]
 	}
 	baseName = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
 			return r
 		}
 		return -1
 	}, baseName)
-	if len(baseName) < 3 || isForbiddenUsername(baseName) {
-		baseName = "Oyuncu"
+	if runes := []rune(baseName); len(runes) > 24 {
+		baseName = string(runes[:24])
 	}
-	if len(baseName) > 18 {
-		baseName = baseName[:18]
+	if len([]rune(baseName)) < 2 || isForbiddenUsername(baseName) {
+		baseName = "Oyuncu"
 	}
 
 	query := fmt.Sprintf(`
@@ -166,23 +167,16 @@ func createProviderUser(providerColumn, providerID, email, displayName string) (
 		RETURNING id, username
 	`, providerColumn)
 
-	var userID int
-	var username string
-	var err error
-	for i := 0; i < 10; i++ {
-		candidate := baseName
-		if i > 0 || baseName == "Oyuncu" {
-			candidate = fmt.Sprintf("%s%d", baseName, secureRandInt(90000)+10000)
-		}
-		randomPass, hashErr := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%s-%s-%d", providerColumn, providerID, time.Now().UnixNano())), BcryptCost)
-		if hashErr != nil {
-			return 0, "", hashErr
-		}
-		err = db.QueryRow(query, candidate, string(randomPass), email, providerID).Scan(&userID, &username)
-		if err == nil {
-			break
-		}
+	randomPass, err := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%s-%s-%d", providerColumn, providerID, time.Now().UnixNano())), BcryptCost)
+	if err != nil {
+		return 0, "", err
 	}
+	userID, username, err := insertWithHandle(baseName, func(candidate string) (int, error) {
+		var id int
+		var stored string
+		err := db.QueryRow(query, candidate, string(randomPass), email, providerID).Scan(&id, &stored)
+		return id, err
+	})
 	if err != nil {
 		return 0, "", err
 	}
@@ -206,7 +200,7 @@ func handleAppleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	audiences := splitCSV(os.Getenv("APPLE_CLIENT_IDS"))
 	if len(audiences) == 0 {
-		http.Error(w, "Apple ile giriş bu sunucuda etkin değil", http.StatusServiceUnavailable)
+		httpError(w, r, "Apple ile giriş bu sunucuda etkin değil", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -217,13 +211,13 @@ func handleAppleAuth(w http.ResponseWriter, r *http.Request) {
 		AcceptedTerms     bool   `json:"acceptedTerms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Credential == "" {
-		http.Error(w, "Apple kimlik bilgisi gerekli", http.StatusBadRequest)
+		httpError(w, r, "Apple kimlik bilgisi gerekli", http.StatusBadRequest)
 		return
 	}
 	identity, err := verifyAppleIDToken(req.Credential, audiences, req.Nonce)
 	if err != nil {
 		log.Println("Apple token doğrulanamadı:", err)
-		http.Error(w, "Apple oturumu doğrulanamadı", http.StatusUnauthorized)
+		httpError(w, r, "Apple oturumu doğrulanamadı", http.StatusUnauthorized)
 		return
 	}
 
@@ -231,28 +225,28 @@ func handleAppleAuth(w http.ResponseWriter, r *http.Request) {
 	var username string
 	err = db.QueryRow(`SELECT id, username FROM users WHERE apple_id = $1 LIMIT 1`, identity.Sub).Scan(&userID, &username)
 	if err == nil && isUserBanned(userID) {
-		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		httpError(w, r, bannedAccountMessage, http.StatusForbidden)
 		return
 	}
 	if err != nil {
 		if !req.AcceptedTerms {
-			http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+			httpError(w, r, termsRequiredMessage, http.StatusBadRequest)
 			return
 		}
 		if identity.Email != "" {
 			var emailTaken bool
 			if qErr := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1))`, identity.Email).Scan(&emailTaken); qErr != nil {
-				http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+				httpError(w, r, "Sunucu hatası", http.StatusInternalServerError)
 				return
 			}
 			if emailTaken {
-				http.Error(w, "Bu e-posta ile kayıtlı bir hesap var. Lütfen diğer giriş yönteminizi kullanın.", http.StatusConflict)
+				httpError(w, r, "Bu e-posta ile kayıtlı bir hesap var. Lütfen diğer giriş yönteminizi kullanın.", http.StatusConflict)
 				return
 			}
 		}
 		userID, username, err = createProviderUser("apple_id", identity.Sub, identity.Email, "")
 		if err != nil {
-			http.Error(w, "Apple hesabı oluşturulamadı", http.StatusInternalServerError)
+			httpError(w, r, "Apple hesabı oluşturulamadı", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -267,7 +261,7 @@ func handleAppleAuth(w http.ResponseWriter, r *http.Request) {
 
 	tokenString, err := issueJWTForUser(userID, 30)
 	if err != nil {
-		http.Error(w, "Token oluşturulamadı", http.StatusInternalServerError)
+		httpError(w, r, "Token oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]interface{}{"token": tokenString, "username": username, "isGuest": false})

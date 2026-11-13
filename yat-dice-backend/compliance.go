@@ -59,10 +59,7 @@ func areFriends(a, b int) bool {
 }
 
 func userIDByName(username string) (int, string, error) {
-	var id int
-	var realName string
-	err := db.QueryRow(`SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)`, strings.TrimSpace(username)).Scan(&id, &realName)
-	return id, realName, err
+	return resolveHandle(db, username)
 }
 
 // POST /ugc/block : Oyuncuyu engeller ve varsa arkadaşlığı kaldırır
@@ -82,16 +79,16 @@ func handleBlockUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 	targetID, targetName, err := userIDByName(req.Username)
 	if err != nil {
-		http.Error(w, "Oyuncu bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Oyuncu bulunamadı", http.StatusNotFound)
 		return
 	}
 	if targetID == uid {
-		http.Error(w, "Kendinizi engelleyemezsiniz", http.StatusBadRequest)
+		httpError(w, r, "Kendinizi engelleyemezsiniz", http.StatusBadRequest)
 		return
 	}
 
@@ -100,7 +97,7 @@ func handleBlockUser(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3)
 		ON CONFLICT (blocker_id, blocked_username) DO UPDATE SET blocked_id = EXCLUDED.blocked_id
 	`, uid, targetID, targetName); err != nil {
-		http.Error(w, "Oyuncu engellenemedi", http.StatusInternalServerError)
+		httpError(w, r, "Oyuncu engellenemedi", http.StatusInternalServerError)
 		return
 	}
 	_, _ = db.Exec(`
@@ -128,11 +125,11 @@ func handleUnblockUser(w http.ResponseWriter, r *http.Request) {
 		UserID int `json:"userId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 	if _, err := db.Exec(`DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2`, uid, req.UserID); err != nil {
-		http.Error(w, "Engel kaldırılamadı", http.StatusInternalServerError)
+		httpError(w, r, "Engel kaldırılamadı", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -158,7 +155,7 @@ func handleListBlocks(w http.ResponseWriter, r *http.Request) {
 		ORDER BY b.id DESC
 	`, uid)
 	if err != nil {
-		http.Error(w, "Engel listesi alınamadı", http.StatusInternalServerError)
+		httpError(w, r, "Engel listesi alınamadı", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -263,12 +260,12 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
-		http.Error(w, "Bildirim nedeni zorunludur", http.StatusBadRequest)
+		httpError(w, r, "Bildirim nedeni zorunludur", http.StatusBadRequest)
 		return
 	}
 	if runes := []rune(reason); len(runes) > 250 {
@@ -276,11 +273,11 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 	}
 	targetID, targetName, err := userIDByName(req.Username)
 	if err != nil {
-		http.Error(w, "Oyuncu bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Oyuncu bulunamadı", http.StatusNotFound)
 		return
 	}
 	if targetID == reporterID {
-		http.Error(w, "Kendinizi bildiremezsiniz", http.StatusBadRequest)
+		httpError(w, r, "Kendinizi bildiremezsiniz", http.StatusBadRequest)
 		return
 	}
 
@@ -288,7 +285,7 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO user_reports (reporter_id, reported_user_id, reported_username, reason, evidence)
 		VALUES ($1, $2, $3, $4, $5)
 	`, reporterID, targetID, targetName, reason, recentChatEvidence(targetID)); err != nil {
-		http.Error(w, "Bildirim kaydedilemedi", http.StatusInternalServerError)
+		httpError(w, r, "Bildirim kaydedilemedi", http.StatusInternalServerError)
 		return
 	}
 
@@ -300,7 +297,7 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	writeJSON(w, map[string]string{"message": "Bildiriminiz moderasyon ekibine iletildi."})
+	writeJSON(w, map[string]string{"message": L(r, "Bildiriminiz moderasyon ekibine iletildi.")})
 }
 
 // ─── KULLANICI DOĞRULAMA VE HESAP KAPATMA ─────────────────────────────────────
@@ -308,12 +305,12 @@ func handleReportUser(w http.ResponseWriter, r *http.Request) {
 func requireUser(w http.ResponseWriter, r *http.Request) (int, bool) {
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return 0, false
 	}
 	uid, err := strconv.Atoi(uidStr)
 	if err != nil || uid <= 0 {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return 0, false
 	}
 	return uid, true
@@ -414,7 +411,7 @@ func handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		http.Error(w, "Geçersiz istek", http.StatusMethodNotAllowed)
+		httpError(w, r, "Geçersiz istek", http.StatusMethodNotAllowed)
 		return
 	}
 	uid, ok := requireUser(w, r)
@@ -422,10 +419,10 @@ func handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := deleteUserData(uid); err != nil {
-		http.Error(w, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
+		httpError(w, r, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"message": "Hesabınız kalıcı olarak silindi."})
+	writeJSON(w, map[string]string{"message": L(r, "Hesabınız kalıcı olarak silindi.")})
 }
 
 // GET ve POST /account/delete : Uygulamayı kaldırmış kullanıcılar için web'den silme sayfası
@@ -436,37 +433,39 @@ func handleWebAccountDeletion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if r.Method == http.MethodGet {
-		writeLegalPage(w, "Hesap Silme", accountDeletionFormHTML)
+		writeLegalPage(w, r, "Hesap Silme", byLang(r, accountDeletionFormHTML, accountDeletionFormHTMLEn))
 		return
 	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "Geçersiz istek", http.StatusMethodNotAllowed)
+		httpError(w, r, "Geçersiz istek", http.StatusMethodNotAllowed)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.PostForm.Get("username"))
 	email := strings.ToLower(strings.TrimSpace(r.PostForm.Get("email")))
 	password := r.PostForm.Get("password")
 	if username == "" || len(username) > 60 || len(email) > 255 || len(password) > 72 || r.PostForm.Get("confirm") != "yes" {
-		writeLegalPage(w, "Hesap Silme", `<p>Kullanıcı adı ve onay kutusu zorunludur.</p><p><a href="/account/delete">Geri dön</a></p>`)
+		writeLegalPage(w, r, "Hesap Silme", L(r, `<p>Kullanıcı adı ve onay kutusu zorunludur.</p><p><a href="/account/delete">Geri dön</a></p>`))
 		return
 	}
 
 	if password != "" {
 		if locked, _ := checkLoginLocked(username); !locked {
-			var userID int
 			var storedHash string
-			err := db.QueryRow(`SELECT id, password_hash FROM users WHERE LOWER(username) = LOWER($1)`, username).Scan(&userID, &storedHash)
+			userID, _, err := resolveHandle(db, username)
+			if err == nil {
+				err = db.QueryRow(`SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&storedHash)
+			}
 			if err == nil && bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil {
 				if err := deleteUserData(userID); err != nil {
-					http.Error(w, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
+					httpError(w, r, "Hesap silinirken sunucu hatası oluştu", http.StatusInternalServerError)
 					return
 				}
 				resetLoginFailures(username)
-				writeLegalPage(w, "Hesap Silindi", `<p>Hesabınız ve ilişkili verileriniz silindi.</p>`)
+				writeLegalPage(w, r, "Hesap Silindi", L(r, `<p>Hesabınız ve ilişkili verileriniz silindi.</p>`))
 				return
 			}
 			recordLoginFailure(username)
@@ -475,10 +474,10 @@ func handleWebAccountDeletion(w http.ResponseWriter, r *http.Request) {
 
 	// Şifresiz talepte hesabın varlığı açıklanmaz; talep moderasyon panelinden incelenir
 	if _, err := db.Exec(`INSERT INTO deletion_requests (username, email) VALUES ($1, $2)`, username, email); err != nil {
-		http.Error(w, "Talep kaydedilemedi", http.StatusInternalServerError)
+		httpError(w, r, "Talep kaydedilemedi", http.StatusInternalServerError)
 		return
 	}
-	writeLegalPage(w, "Talebiniz Alındı", `<p>Bilgileriniz hesapla eşleşiyorsa talebiniz en geç 30 gün içinde işlenecektir.</p>`)
+	writeLegalPage(w, r, "Talebiniz Alındı", L(r, `<p>Bilgileriniz hesapla eşleşiyorsa talebiniz en geç 30 gün içinde işlenecektir.</p>`))
 }
 
 const accountDeletionFormHTML = `<p>Bu sayfadan Yat Dice hesabınızı ve ilişkili verilerinizi silebilirsiniz. Silinen hesap geri getirilemez.</p>
@@ -568,7 +567,7 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !adminAuthorized(r) {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -595,7 +594,7 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 		WHERE r.status = 'open' ORDER BY r.id LIMIT 100
 	`)
 	if err != nil {
-		http.Error(w, "Kuyruk alınamadı", http.StatusInternalServerError)
+		httpError(w, r, "Kuyruk alınamadı", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -611,12 +610,12 @@ func handleAdminQueue(w http.ResponseWriter, r *http.Request) {
 	deletions := []deletionItem{}
 	deletionRows, err := db.Query(`
 		SELECT d.id, d.username, d.email, d.created_at,
-		       EXISTS(SELECT 1 FROM users u WHERE LOWER(u.username) = LOWER(d.username)
+		       EXISTS(SELECT 1 FROM users u WHERE (LOWER(u.username) = LOWER(d.username) OR LOWER(split_part(u.username, '#', 1)) = LOWER(d.username))
 		              AND d.email <> '' AND LOWER(u.email) = LOWER(d.email))
 		FROM deletion_requests d WHERE d.status = 'open' ORDER BY d.id LIMIT 100
 	`)
 	if err != nil {
-		http.Error(w, "Kuyruk alınamadı", http.StatusInternalServerError)
+		httpError(w, r, "Kuyruk alınamadı", http.StatusInternalServerError)
 		return
 	}
 	defer deletionRows.Close()
@@ -636,7 +635,7 @@ func handleAdminAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !adminAuthorized(r) {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 	var req struct {
@@ -645,7 +644,7 @@ func handleAdminAction(w http.ResponseWriter, r *http.Request) {
 		Action string `json:"action"`
 	}
 	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&req) != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
@@ -687,11 +686,11 @@ func handleAdminAction(w http.ResponseWriter, r *http.Request) {
 	case req.Kind == "deletion" && req.Action == "dismiss":
 		_, err = db.Exec(`DELETE FROM deletion_requests WHERE id = $1`, req.ID)
 	default:
-		http.Error(w, "Geçersiz işlem", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz işlem", http.StatusBadRequest)
 		return
 	}
 	if err != nil {
-		http.Error(w, "İşlem tamamlanamadı", http.StatusInternalServerError)
+		httpError(w, r, "İşlem tamamlanamadı", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -728,11 +727,11 @@ document.getElementById('load').onclick=load;
 
 // ─── GİZLİLİK POLİTİKASI VE KULLANIM KOŞULLARI ────────────────────────────────
 
-func legalContactHTML() string {
+func legalContactHTML(r *http.Request) string {
 	owner := strings.TrimSpace(os.Getenv("LEGAL_OWNER_NAME"))
 	contact := strings.TrimSpace(os.Getenv("LEGAL_CONTACT_EMAIL"))
 	if owner == "" {
-		owner = "Yat Dice geliştiricisi"
+		owner = L(r, "Yat Dice geliştiricisi")
 	}
 	if contact == "" {
 		return owner
@@ -740,25 +739,34 @@ func legalContactHTML() string {
 	return owner + " — <a href=\"mailto:" + contact + "\">" + contact + "</a>"
 }
 
-func writeLegalPage(w http.ResponseWriter, title, body string) {
+func writeLegalPage(w http.ResponseWriter, r *http.Request, title, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	page := `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — ` + title + `</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4aada6}a{color:#c9a84c}label{display:block;margin:14px 0 4px}label.check{display:flex;gap:8px;align-items:flex-start}input:not([type=checkbox]){display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:11px;border-radius:8px;border:1px solid #333845;background:#1f232b;color:#e5e7eb}button{margin-top:14px;padding:12px 18px;border:0;border-radius:8px;background:#c0392b;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Yat Dice — ` + title + `</h1>` + body + `</body></html>`
+	title = L(r, title)
+	page := `<!doctype html><html lang="` + requestLang(r) + `"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Yat Dice — ` + title + `</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#111318;color:#e5e7eb;max-width:740px;margin:0 auto;padding:32px 20px;line-height:1.65}h1,h2{color:#4aada6}a{color:#c9a84c}label{display:block;margin:14px 0 4px}label.check{display:flex;gap:8px;align-items:flex-start}input:not([type=checkbox]){display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:11px;border-radius:8px;border:1px solid #333845;background:#1f232b;color:#e5e7eb}button{margin-top:14px;padding:12px 18px;border:0;border-radius:8px;background:#c0392b;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Yat Dice — ` + title + `</h1>` + body + `</body></html>`
 	_, _ = w.Write([]byte(page))
 }
 
 // GET /privacy
 func handlePrivacyHTML(w http.ResponseWriter, r *http.Request) {
-	writeLegalPage(w, "Gizlilik Politikası", strings.ReplaceAll(privacyPolicyHTML, "{{CONTACT}}", legalContactHTML()))
+	writeLegalPage(w, r, "Gizlilik Politikası", strings.ReplaceAll(byLang(r, privacyPolicyHTML, privacyPolicyHTMLEn), "{{CONTACT}}", legalContactHTML(r)))
 }
 
 // GET /terms
 func handleTermsHTML(w http.ResponseWriter, r *http.Request) {
-	writeLegalPage(w, "Kullanım Koşulları", strings.ReplaceAll(termsOfUseHTML, "{{CONTACT}}", legalContactHTML()))
+	writeLegalPage(w, r, "Kullanım Koşulları", strings.ReplaceAll(byLang(r, termsOfUseHTML, termsOfUseHTMLEn), "{{CONTACT}}", legalContactHTML(r)))
 }
 
 // GET /support : Mağazalarda destek adresi olarak da kullanılır
 func handleSupportHTML(w http.ResponseWriter, r *http.Request) {
-	writeLegalPage(w, "Destek", strings.ReplaceAll(supportHTML, "{{CONTACT}}", legalContactHTML()))
+	writeLegalPage(w, r, "Destek", strings.ReplaceAll(byLang(r, supportHTML, supportHTMLEn), "{{CONTACT}}", legalContactHTML(r)))
+}
+
+// byLang isteğin diline göre Türkçe veya İngilizce sayfa metnini seçer.
+func byLang(r *http.Request, tr, en string) string {
+	if requestLang(r) == langEN {
+		return en
+	}
+	return tr
 }
 
 const supportHTML = `<p>Soru, hata bildirimi, şikâyet veya veri talepleriniz için bize e-postayla ulaşabilirsiniz:</p>

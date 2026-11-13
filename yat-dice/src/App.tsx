@@ -2,14 +2,15 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Sun, Moon, ShoppingBag, Users, Zap, Trophy,
+  ShoppingBag, Users, Zap, Trophy,
   RotateCcw, Crown, Check, Lock,
-  Home, TrendingUp, Edit3, X, ChevronLeft, Flag
+  Home, TrendingUp, Edit3, X, ChevronLeft, ChevronRight, Flag, Settings as SettingsIcon
 } from "lucide-react";
 import {
-  APPLE_AVAILABLE, GOOGLE_AVAILABLE, IS_NATIVE, haptic, minimizeApp, nativeAppleLogin, nativeGoogleLogin,
-  openExternal, registerNativeHandlers
+  APPLE_AVAILABLE, GOOGLE_AVAILABLE, IS_NATIVE, applyStatusBarTheme, haptic, hapticsEnabled, minimizeApp,
+  nativeAppleLogin, nativeGoogleLogin, openExternal, registerNativeHandlers, setHapticsEnabled
 } from "./native";
+import { getLang, setLang, t, type Lang } from "./i18n";
 
 // Geliştirmede adres verilmezse sayfanın açıldığı makinedeki 8080 portu kullanılır.
 // Böylece hem localhost'tan hem telefondan (ağ IP'si değişse bile) backend'e ulaşılır.
@@ -17,6 +18,25 @@ const DEV_HOST = import.meta.env.DEV && typeof location !== "undefined" ? locati
 const API_BASE = import.meta.env.VITE_API_URL || `http://${DEV_HOST}:8080`;
 const WS_BASE  = import.meta.env.VITE_WS_URL  || `ws://${DEV_HOST}:8080`;
 const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+// Backend'e giden her istek seçili dili bildirir; sunucu hata ve bilgi mesajlarını bu dilde döner.
+if (typeof window !== "undefined") {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (!url.startsWith(API_BASE)) return nativeFetch(input, init);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (!headers.has("Accept-Language")) headers.set("Accept-Language", getLang());
+    return nativeFetch(input, { ...init, headers });
+  };
+}
+
+/** Backend sayfa adresine seçili dili ekler (gizlilik, koşullar, destek). */
+function pageUrl(path: string): string {
+  return `${API_BASE}${path}${path.includes("?") ? "&" : "?"}lang=${getLang()}`;
+}
+// Mağaza sürümüyle (versionName / MARKETING_VERSION) aynı tutulmalı
+const APP_VERSION = "1.0.0";
 const APP_FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
 // ─── Web Audio API Ses Efekt Motoru (Harici MP3 Gerektirmez) ──────────────────
@@ -197,7 +217,7 @@ interface LeaderboardEntry {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends" | "quests";
+type Screen  = "auth" | "home" | "shop" | "game" | "result" | "modes" | "friends" | "quests" | "settings";
 type DieVal  = 1 | 2 | 3 | 4 | 5 | 6;
 type DieMat  = "ivory" | "wood" | "marble" | "obsidian" | "ruby" | "gold";
 type BetOption = 0 | 50 | 100 | 250 | 500;
@@ -372,6 +392,36 @@ const COUNTRIES: { code: string; flag: string; name: string }[] = [
   { code: "JP", flag: "🇯🇵", name: "Japonya" },
   { code: "KR", flag: "🇰🇷", name: "Güney Kore" },
   { code: "BR", flag: "🇧🇷", name: "Brezilya" },
+  { code: "CA", flag: "🇨🇦", name: "Kanada" },
+  { code: "MX", flag: "🇲🇽", name: "Meksika" },
+  { code: "AR", flag: "🇦🇷", name: "Arjantin" },
+  { code: "AU", flag: "🇦🇺", name: "Avustralya" },
+  { code: "SE", flag: "🇸🇪", name: "İsveç" },
+  { code: "NO", flag: "🇳🇴", name: "Norveç" },
+  { code: "DK", flag: "🇩🇰", name: "Danimarka" },
+  { code: "FI", flag: "🇫🇮", name: "Finlandiya" },
+  { code: "PL", flag: "🇵🇱", name: "Polonya" },
+  { code: "AT", flag: "🇦🇹", name: "Avusturya" },
+  { code: "CH", flag: "🇨🇭", name: "İsviçre" },
+  { code: "BE", flag: "🇧🇪", name: "Belçika" },
+  { code: "PT", flag: "🇵🇹", name: "Portekiz" },
+  { code: "IE", flag: "🇮🇪", name: "İrlanda" },
+  { code: "GR", flag: "🇬🇷", name: "Yunanistan" },
+  { code: "CY", flag: "🇨🇾", name: "Kıbrıs" },
+  { code: "RO", flag: "🇷🇴", name: "Romanya" },
+  { code: "BG", flag: "🇧🇬", name: "Bulgaristan" },
+  { code: "UA", flag: "🇺🇦", name: "Ukrayna" },
+  { code: "GE", flag: "🇬🇪", name: "Gürcistan" },
+  { code: "KZ", flag: "🇰🇿", name: "Kazakistan" },
+  { code: "UZ", flag: "🇺🇿", name: "Özbekistan" },
+  { code: "IN", flag: "🇮🇳", name: "Hindistan" },
+  { code: "ID", flag: "🇮🇩", name: "Endonezya" },
+  { code: "PH", flag: "🇵🇭", name: "Filipinler" },
+  { code: "EG", flag: "🇪🇬", name: "Mısır" },
+  { code: "SA", flag: "🇸🇦", name: "Suudi Arabistan" },
+  { code: "AE", flag: "🇦🇪", name: "Birleşik Arap Emirlikleri" },
+  { code: "ZA", flag: "🇿🇦", name: "Güney Afrika" },
+  { code: "XX", flag: "🌍", name: "Diğer" },
 ];
 
 const PRESET_AVATARS = ["🎲", "👑", "🦁", "🐉", "🦊", "🐼", "⚡", "🔥", "💎", "🤖", "🎯", "🧙‍♂️"];
@@ -777,9 +827,9 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
     if (licenseText !== null) { setLicenseText(null); return; }
     try {
       const res = await fetch("./licenses.txt");
-      setLicenseText(res.ok ? await res.text() : "Lisans listesi yüklenemedi.");
+      setLicenseText(res.ok ? await res.text() : t("Lisans listesi yüklenemedi."));
     } catch {
-      setLicenseText("Lisans listesi yüklenemedi.");
+      setLicenseText(t("Lisans listesi yüklenemedi."));
     }
   };
   return (
@@ -796,41 +846,41 @@ function LegalModal({ open, onClose, dark }: { open: boolean; onClose: () => voi
             style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 365, maxHeight: "84vh", display: "flex", flexDirection: "column", border: `1px solid ${c.borderMid}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }}
           >
             <div style={{ padding: "15px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
-              <h3 style={{ color: c.text, fontSize: 15, fontWeight: 800, margin: 0 }}>📜 Gizlilik Politikası, EULA & Yasal Beyan</h3>
+              <h3 style={{ color: c.text, fontSize: 15, fontWeight: 800, margin: 0 }}>{t("📜 Gizlilik Politikası, EULA & Yasal Beyan")}</h3>
               <button onClick={onClose} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
             </div>
             <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, fontSize: 11.5, color: c.textSub, lineHeight: 1.55 }}>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>⚖️ Sanal Jeton & Kumar Yasağı Beyanı (No Gambling)</p>
-                Yat Dice, şans ve stratejiye dayalı, eğlence amaçlı bir zar oyunudur. Oyun içindeki tüm <b>Jetonlar (🪙)</b> ve <b>Kasalar (📦)</b> yalnızca sanal oyun içi puandır; <b>gerçek parayla satın alınamaz, gerçek paraya, kripto varlığa veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).</b>
+                <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>{t("⚖️ Sanal Jeton & Kumar Yasağı Beyanı (No Gambling)")}</p>
+                {t("Yat Dice, şans ve stratejiye dayalı, eğlence amaçlı bir zar oyunudur. Oyun içindeki tüm")} <b>{t("Jetonlar (🪙)")}</b> {t("ve")} <b>{t("Kasalar (📦)")}</b> {t("yalnızca sanal oyun içi puandır;")} <b>{t("gerçek parayla satın alınamaz, gerçek paraya, kripto varlığa veya maddi bir değere dönüştürülemez (No Real-Money Gambling / No Cash-Out).")}</b>
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>📦 Kasa (Loot Box) Olasılık Bildirimi</p>
-                Açılan her Kasa (📦) %100 olasılıkla <b>50 ile 199 arasında sanal jeton</b> kazandırır. Olasılık dağılımı tamamen eşittir (Uniform):<br />
-                • <b>50 – 99 🪙 Sanal Jeton:</b> %33.3<br />
-                • <b>100 – 149 🪙 Sanal Jeton:</b> %33.3<br />
-                • <b>150 – 199 🪙 Sanal Jeton:</b> %33.4
+                <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>{t("📦 Kasa (Loot Box) Olasılık Bildirimi")}</p>
+                {t("Açılan her Kasa (📦) %100 olasılıkla")} <b>{t("50 ile 199 arasında sanal jeton")}</b> {t("kazandırır. Olasılık dağılımı tamamen eşittir (Uniform):")}<br />
+                • <b>{t("50 – 99 🪙 Sanal Jeton:")}</b> %33.3<br />
+                • <b>{t("100 – 149 🪙 Sanal Jeton:")}</b> %33.3<br />
+                • <b>{t("150 – 199 🪙 Sanal Jeton:")}</b> %33.4
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🛡️ Topluluk Kuralları (UGC) & Sıfır Tolerans</p>
-                Oyun içi sohbette küfür, hakaret, taciz ve nefret söylemine karşı <b>sıfır tolerans</b> uygulanır. Uygunsuz mesajlar otomatik filtrelenir; oyuncular maç esnasında rakiplerini anında <b>Susturup / Engelleyebilir (Block)</b> veya <b>Şikayet Edebilir (Report)</b>. Uygunsuz profil fotoğrafı veya kullanıcı adı, liderlik tablosundaki bayrak simgesiyle bildirilebilir. Şikâyetler incelenir; ihlal eden içerik kaldırılır ve hesaplar kapatılabilir.
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>{t("🛡️ Topluluk Kuralları (UGC) & Sıfır Tolerans")}</p>
+                {t("Oyun içi sohbette küfür, hakaret, taciz ve nefret söylemine karşı")} <b>{t("sıfır tolerans")}</b> {t("uygulanır. Uygunsuz mesajlar otomatik filtrelenir; oyuncular maç esnasında rakiplerini anında")} <b>{t("Susturup / Engelleyebilir (Block)")}</b> {t("veya")} <b>{t("Şikayet Edebilir (Report)")}</b>{t(". Uygunsuz profil fotoğrafı veya kullanıcı adı, liderlik tablosundaki bayrak simgesiyle bildirilebilir. Şikâyetler incelenir; ihlal eden içerik kaldırılır ve hesaplar kapatılabilir.")}
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)</p>
-                Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı <b>Profili Özelleştir &rarr; Hesabımı ve Verilerimi Kalıcı Olarak Sil</b> adımından silebilirsiniz.
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>{t("🔒 Gizlilik & Hesap Silme Hakkı (KVKK / GDPR)")}</p>
+                {t("Hesap, profil, oyun ve güvenlik verileri hizmeti sunmak için işlenir; satılmaz ve reklam takipçisi kullanılmaz. Hesabınızı")} <b>{t("Profili Özelleştir → Hesabımı ve Verilerimi Kalıcı Olarak Sil")}</b> {t("adımından silebilirsiniz.")}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
-                  <ExternalLink path="/privacy" color={c.accent}>Gizlilik Politikası</ExternalLink>
-                  <ExternalLink path="/terms" color={c.accent}>Kullanım Koşulları</ExternalLink>
-                  <ExternalLink path="/account/delete" color={c.accent}>Web'den Hesap Silme</ExternalLink>
+                  <ExternalLink path="/privacy" color={c.accent}>{t("Gizlilik Politikası")}</ExternalLink>
+                  <ExternalLink path="/terms" color={c.accent}>{t("Kullanım Koşulları")}</ExternalLink>
+                  <ExternalLink path="/account/delete" color={c.accent}>{t("Web'den Hesap Silme")}</ExternalLink>
                 </div>
               </div>
               <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>✉️ İletişim & Destek</p>
-                Soru, hata bildirimi, şikâyet veya veri talepleriniz için destek sayfasındaki e-posta adresinden bize ulaşabilirsiniz.
+                <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>{t("✉️ İletişim & Destek")}</p>
+                {t("Soru, hata bildirimi, şikâyet veya veri talepleriniz için destek sayfasındaki e-posta adresinden bize ulaşabilirsiniz.")}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
-                  <ExternalLink path="/support" color={c.accent}>Destek ve İletişim</ExternalLink>
+                  <ExternalLink path="/support" color={c.accent}>{t("Destek ve İletişim")}</ExternalLink>
                   <button type="button" onClick={toggleLicenses} style={{ background: "none", border: "none", padding: 0, color: c.accent, textDecoration: "underline", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}>
-                    Açık Kaynak Lisansları
+                    {t("Açık Kaynak Lisansları")}
                   </button>
                 </div>
                 {licenseText !== null && (
@@ -862,11 +912,11 @@ function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
       script.onload = () => {
         const api = (window as unknown as { google?: { accounts?: { id?: GoogleIdentityApi } } }).google?.accounts?.id;
         if (api) resolve(api);
-        else reject(new Error("Google girişi yüklenemedi"));
+        else reject(new Error(t("Google girişi yüklenemedi")));
       };
       script.onerror = () => {
         googleIdentityPromise = null;
-        reject(new Error("Google girişi yüklenemedi"));
+        reject(new Error(t("Google girişi yüklenemedi")));
       };
       document.head.appendChild(script);
     });
@@ -877,6 +927,7 @@ function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
 function GoogleSignInButton({ dark, onCredential, onError }: {
   dark: boolean; onCredential: (credential: string) => void; onError: (message: string) => void;
 }) {
+  const lang = getLang();
   const containerRef = useRef<HTMLDivElement>(null);
   const handlersRef = useRef({ onCredential, onError });
 
@@ -895,7 +946,7 @@ function GoogleSignInButton({ dark, onCredential, onError }: {
         });
         api.renderButton(containerRef.current, {
           type: "standard", theme: dark ? "filled_black" : "outline", size: "large",
-          text: "continue_with", shape: "rectangular", locale: "tr",
+          text: "continue_with", shape: "rectangular", locale: lang,
           width: Math.min(400, containerRef.current.offsetWidth)
         });
       })
@@ -903,7 +954,7 @@ function GoogleSignInButton({ dark, onCredential, onError }: {
         if (active) handlersRef.current.onError(err.message);
       });
     return () => { active = false; };
-  }, [dark]);
+  }, [dark, lang]);
 
   return <div ref={containerRef} style={{ display:"flex", justifyContent:"center", minHeight:44 }} />;
 }
@@ -916,9 +967,30 @@ type ResumeState = {
 type ResumedMatch = { playerIndex: number; opponentName: string; betAmount: number; state: ResumeState };
 type BlockedUser = { userId: number; username: string };
 
+// Oyuncu adları "Ad#1234" biçimindedir: aynı ad farklı etiketle birden fazla kişide olabilir.
+function nameOf(handle: string): string {
+  const i = handle.lastIndexOf("#");
+  return i > 0 ? handle.slice(0, i) : handle;
+}
+function tagOf(handle: string): string {
+  const i = handle.lastIndexOf("#");
+  return i > 0 ? handle.slice(i) : "";
+}
+/** Adı normal, etiketi soluk gösterir. */
+function Handle({ value, tagColor }: { value: string; tagColor: string }) {
+  return <>{nameOf(value)}<span style={{ color: tagColor, fontWeight: 500, fontSize: "0.85em" }}>{tagOf(value)}</span></>;
+}
+
+// Hazır sohbet mesajları Türkçe anahtarla gönderilir; her oyuncu kendi dilinde görür
+const CHAT_PRESETS = ["Bol şans! 🍀", "İyi hamle! 👏", "Eyvah! 😅", "YAT geliyor! 🔥", "İyi oyundu! 🤝"];
+const CHAT_TRANSLATABLE = new Set([...CHAT_PRESETS, "*** (Topluluk Kuralları gereği gizlendi)"]);
+function chatText(text: string): string {
+  return CHAT_TRANSLATABLE.has(text) ? t(text) : text;
+}
+
 // Liderlik tablosundaki uygunsuz profil fotoğrafı veya kullanıcı adını moderasyona bildirir
 async function reportProfile(username: string) {
-  if (!window.confirm(`${username} adlı oyuncunun profil fotoğrafını veya kullanıcı adını uygunsuz içerik olarak şikâyet etmek istiyor musun?`)) return;
+  if (!window.confirm(t("{0} adlı oyuncunun profil fotoğrafını veya kullanıcı adını uygunsuz içerik olarak şikâyet etmek istiyor musun?", username))) return;
   try {
     const res = await fetch(`${API_BASE}/ugc/report`, {
       method: "POST",
@@ -928,17 +1000,17 @@ async function reportProfile(username: string) {
       },
       body: JSON.stringify({ username, reason: "Uygunsuz profil fotoğrafı veya kullanıcı adı" })
     });
-    window.alert(res.ok ? "Şikâyetin moderasyon ekibine iletildi." : "Şikâyet gönderilemedi. Lütfen tekrar dene.");
+    window.alert(res.ok ? t("Şikâyetin moderasyon ekibine iletildi.") : t("Şikâyet gönderilemedi. Lütfen tekrar dene."));
   } catch {
-    window.alert("Şikâyet gönderilemedi. Lütfen tekrar dene.");
+    window.alert(t("Şikâyet gönderilemedi. Lütfen tekrar dene."));
   }
 }
 
 function ExternalLink({ path, color, children }: { path: string; color: string; children: React.ReactNode }) {
   return (
     <a
-      href={`${API_BASE}${path}`}
-      onClick={event => { event.preventDefault(); openExternal(`${API_BASE}${path}`); }}
+      href={pageUrl(path)}
+      onClick={event => { event.preventDefault(); openExternal(pageUrl(path)); }}
       style={{ color }}
     >
       {children}
@@ -948,7 +1020,7 @@ function ExternalLink({ path, color, children }: { path: string; color: string; 
 
 const TERMS_REQUIRED_TEXT = "Devam etmek için kutuyu işaretleyerek koşulları kabul etmelisiniz.";
 
-function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: string) => void, dark: boolean }) {
+function AuthScreen({ onLogin, dark, lang, onLangChange }: { onLogin: (username: string, token: string) => void, dark: boolean, lang: Lang, onLangChange: (l: Lang) => void }) {
   const c = C(dark);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot" | "reset">("login");
   const [username, setUsername] = useState("");
@@ -972,7 +1044,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
     setError("");
     setInfoMsg("");
     if (authMode === "register" && !acceptedTerms) {
-      setError(TERMS_REQUIRED_TEXT);
+      setError(t(TERMS_REQUIRED_TEXT));
       return;
     }
     setLoading(true);
@@ -987,13 +1059,19 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         });
         if (!res.ok) {
           const errText = await res.text();
-          throw new Error(errText || "Bir hata oluştu");
+          throw new Error(errText || t("Bir hata oluştu"));
         }
         if (authMode === "login") {
           const data = await res.json();
           onLogin(data.username, data.token);
         } else {
-          setInfoMsg("🎉 Kayıt başarılı! Şimdi giriş yapabilirsiniz.");
+          const data = await res.json().catch(() => ({}));
+          if (data.username) {
+            setUsername(data.username);
+            setInfoMsg(t("🎉 Kayıt başarılı! Oyuncu etiketin: {0}. Bununla giriş yapabilir ve arkadaşlarına paylaşabilirsin.", data.username));
+          } else {
+            setInfoMsg(t("🎉 Kayıt başarılı! Şimdi giriş yapabilirsiniz."));
+          }
           setAuthMode("login");
           setPassword("");
         }
@@ -1005,14 +1083,14 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         });
         if (!res.ok) {
           const errText = await res.text();
-          throw new Error(errText || "Kod oluşturulamadı");
+          throw new Error(errText || t("Kod oluşturulamadı"));
         }
         const data = await res.json();
         if (data.resetCode) {
           setResetCode(data.resetCode);
-          setInfoMsg(`Doğrulama kodunuz oluşturuldu: ${data.resetCode}`);
+          setInfoMsg(t("Doğrulama kodunuz oluşturuldu: {0}", data.resetCode));
         } else {
-          setInfoMsg(data.message || "Bilgiler eşleşiyorsa doğrulama kodu e-postanıza gönderildi.");
+          setInfoMsg(data.message || t("Bilgiler eşleşiyorsa doğrulama kodu e-postanıza gönderildi."));
         }
         setAuthMode("reset");
       } else if (authMode === "reset") {
@@ -1023,9 +1101,9 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         });
         if (!res.ok) {
           const errText = await res.text();
-          throw new Error(errText || "Şifre sıfırlanamadı");
+          throw new Error(errText || t("Şifre sıfırlanamadı"));
         }
-        setInfoMsg("✅ Şifreniz başarıyla sıfırlandı! Giriş yapabilirsiniz.");
+        setInfoMsg(t("✅ Şifreniz başarıyla sıfırlandı! Giriş yapabilirsiniz."));
         setPassword("");
         setNewPassword("");
         setAuthMode("login");
@@ -1041,7 +1119,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   const handleGuestLogin = async () => {
     setError("");
     if (!acceptedTerms) {
-      setError(TERMS_REQUIRED_TEXT);
+      setError(t(TERMS_REQUIRED_TEXT));
       return;
     }
     setLoading(true);
@@ -1058,9 +1136,9 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         onLogin(data.username, data.token);
         return;
       }
-      setError((await res.text()) || "Misafir girişi başarısız");
+      setError((await res.text()) || t("Misafir girişi başarısız"));
     } catch {
-      setError("Sunucuya ulaşılamadı. Bağlantını kontrol edip tekrar dene.");
+      setError(t("Sunucuya ulaşılamadı. Bağlantını kontrol edip tekrar dene."));
     } finally {
       setLoading(false);
     }
@@ -1078,7 +1156,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "Giriş başarısız");
+        throw new Error(txt || t("Giriş başarısız"));
       }
       const data = await res.json();
       onLogin(data.username, data.token);
@@ -1094,7 +1172,15 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
   const handleNativeApple = () => socialLogin("/auth/apple", nativeAppleLogin);
 
   return (
-    <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:APP_FONT }}>
+    <div style={{ height:"100%", overflowY:"auto", display:"flex", flexDirection:"column", justifyContent:"center", padding:24, background:c.bg, color:c.text, fontFamily:APP_FONT, position:"relative" }}>
+      <button
+        type="button"
+        onClick={() => onLangChange(lang === "tr" ? "en" : "tr")}
+        aria-label={lang === "tr" ? "Switch to English" : "Türkçeye geç"}
+        style={{ position:"absolute", top:"calc(12px + env(safe-area-inset-top))", right:16, background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:20, padding:"6px 12px", color:c.text, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:APP_FONT }}
+      >
+        🌐 {lang === "tr" ? "English" : "Türkçe"}
+      </button>
       <div style={{ display:"flex", justifyContent:"center", gap:8, marginBottom: 24 }}>
         {([3,1,5,2,4] as DieVal[]).map((v,i)=>(
           <motion.div key={i} initial={{ y: -50, opacity: 0, rotate: -180 }} animate={{ y: 0, opacity: 1, rotate: 0 }} transition={{ delay: i * 0.1, type: "spring", stiffness: 200, damping: 15 }}>
@@ -1108,35 +1194,35 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
           Yat <span style={{ color:c.accent }}>Dice</span>
         </h1>
         <p style={{ fontSize:13, color:c.textSub, marginTop:6 }}>
-          {authMode === "login" && "Hesabınıza giriş yapın"}
-          {authMode === "register" && "Yeni bir hesap oluşturun"}
-          {authMode === "forgot" && "Şifre sıfırlama kodu alın"}
-          {authMode === "reset" && "Yeni şifrenizi belirleyin"}
+          {authMode === "login" && t("Hesabınıza giriş yapın")}
+          {authMode === "register" && t("Yeni bir hesap oluşturun")}
+          {authMode === "forgot" && t("Şifre sıfırlama kodu alın")}
+          {authMode === "reset" && t("Yeni şifrenizi belirleyin")}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:13, background:c.panel, padding:22, borderRadius:24, border:`1px solid ${c.border}`, boxShadow:`0 8px 32px ${c.shadow}` }}>
         <div>
-          <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>Kullanıcı Adı</label>
-          <input type="text" value={username} onChange={e => setUsername(e.target.value)} required placeholder="Örn: Utku" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
+          <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>{t("Kullanıcı Adı")}</label>
+          <input type="text" value={username} onChange={e => setUsername(e.target.value)} required placeholder={authMode === "register" ? t("Örn: Utku") : t("Örn: Utku veya Utku#1234")} style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
         </div>
 
         {(authMode === "register" || authMode === "forgot") && (
           <div>
             <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>
-              E-posta {authMode === "register" ? "(Şifre kurtarma için gerekli)" : "(Hesabınızdaki adres)"}
+              {t("E-posta")} {authMode === "register" ? t("(Şifre kurtarma için gerekli)") : t("(Hesabınızdaki adres)")}
             </label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="ornek@gmail.com" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t("ornek@gmail.com")} style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
           </div>
         )}
 
         {(authMode === "login" || authMode === "register") && (
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-              <label style={{ fontSize:12, fontWeight:700, color:c.textSub }}>Şifre</label>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub }}>{t("Şifre")}</label>
               {authMode === "login" && (
                 <button type="button" onClick={() => { setAuthMode("forgot"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.accent, fontSize:11, fontWeight:700, cursor:"pointer", padding:0 }}>
-                  Şifremi Unuttum?
+                  {t("Şifremi Unuttum?")}
                 </button>
               )}
             </div>
@@ -1147,11 +1233,11 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
         {authMode === "reset" && (
           <>
             <div>
-              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>6 Haneli Sıfırlama Kodu</label>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>{t("6 Haneli Sıfırlama Kodu")}</label>
               <input type="text" value={resetCode} onChange={e => setResetCode(e.target.value)} required placeholder="123456" maxLength={6} style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.accent, fontSize:16, letterSpacing:4, outline:"none", fontWeight:800 }} />
             </div>
             <div>
-              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>Yeni Şifre (En az 6 karakter)</label>
+              <label style={{ fontSize:12, fontWeight:700, color:c.textSub, marginBottom:6, display:"block" }}>{t("Yeni Şifre (En az 6 karakter)")}</label>
               <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required placeholder="••••••••" style={{ width:"100%", boxSizing:"border-box", padding:"13px 15px", borderRadius:12, border:`1px solid ${c.border}`, background:c.bg, color:c.text, fontSize:14, outline:"none", fontWeight:600 }} />
             </div>
           </>
@@ -1166,9 +1252,9 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
 
         <motion.button whileTap={!loading ? {scale:0.97} : {}} disabled={loading} type="submit" style={{ padding:"15px", marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", fontWeight:800, fontSize:14, cursor:loading?"not-allowed":"pointer", opacity:loading?0.7:1, display:"flex", justifyContent:"center" }}>
           {loading ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RotateCcw size={18}/></motion.div> : (
-            authMode === "login" ? "GİRİŞ YAP" :
-            authMode === "register" ? "KAYIT OL" :
-            authMode === "forgot" ? "SIFIRLAMA KODU AL" : "ŞİFREYİ GÜNCELLE"
+            authMode === "login" ? t("GİRİŞ YAP") :
+            authMode === "register" ? t("KAYIT OL") :
+            authMode === "forgot" ? t("SIFIRLAMA KODU AL") : t("ŞİFREYİ GÜNCELLE")
           )}
         </motion.button>
 
@@ -1177,7 +1263,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
             <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:11, lineHeight:1.4, color:c.textSub, cursor:"pointer" }}>
               <input type="checkbox" checked={acceptedTerms} onChange={e => updateAcceptedTerms(e.target.checked)} style={{ marginTop:1, accentColor:c.accent }} />
               <span>
-                13 yaşından büyüğüm; <ExternalLink path="/terms" color={c.accent}>Kullanım Koşulları</ExternalLink>'nı ve <ExternalLink path="/privacy" color={c.accent}>Gizlilik Politikası</ExternalLink>'nı kabul ediyorum.
+                {t("13 yaşından büyüğüm;")} <ExternalLink path="/terms" color={c.accent}>{t("Kullanım Koşulları")}</ExternalLink>{t("'nı ve")} <ExternalLink path="/privacy" color={c.accent}>{t("Gizlilik Politikası")}</ExternalLink>{t("'nı kabul ediyorum.")}
               </span>
             </label>
 
@@ -1193,7 +1279,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
                   <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
                   <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
                 </svg>
-                Google ile Devam Et
+                {t("Google ile Devam Et")}
               </button>
             )}
 
@@ -1202,12 +1288,12 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
                   <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>
                 </svg>
-                Apple ile Devam Et
+                {t("Apple ile Devam Et")}
               </button>
             )}
 
             <button type="button" onClick={handleGuestLogin} style={{ padding:"13px", borderRadius:12, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontWeight:700, fontSize:13, cursor:"pointer" }}>
-              🎲 Misafir Olarak Devam Et
+              {t("🎲 Misafir Olarak Devam Et")}
             </button>
           </>
         )}
@@ -1216,11 +1302,11 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
       <div style={{ textAlign:"center", marginTop:14, display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
         {authMode === "login" ? (
           <button type="button" onClick={() => { setAuthMode("register"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:4 }}>
-            Hesabın yok mu? <span style={{ color:c.accent, fontWeight:800 }}>Kayıt Ol</span>
+            {t("Hesabın yok mu?")} <span style={{ color:c.accent, fontWeight:800 }}>{t("Kayıt Ol")}</span>
           </button>
         ) : (
           <button type="button" onClick={() => { setAuthMode("login"); setError(""); setInfoMsg(""); }} style={{ background:"none", border:"none", color:c.textSub, fontSize:13, fontWeight:600, cursor:"pointer", padding:4 }}>
-            Giriş ekranına dön → <span style={{ color:c.accent, fontWeight:800 }}>Giriş Yap</span>
+            {t("Giriş ekranına dön →")} <span style={{ color:c.accent, fontWeight:800 }}>{t("Giriş Yap")}</span>
           </button>
         )}
         <button
@@ -1228,7 +1314,7 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
           onClick={() => setShowLegal(true)}
           style={{ background: "none", border: "none", color: c.textSub, fontSize: 10.5, cursor: "pointer", textDecoration: "underline", padding: 2 }}
         >
-          📜 Gizlilik Politikası, Kullanım Koşulları (EULA) ve Yasal Beyan
+          {t("📜 Gizlilik Politikası, Kullanım Koşulları (EULA) ve Yasal Beyan")}
         </button>
       </div>
       <LegalModal open={showLegal} onClose={() => setShowLegal(false)} dark={dark} />
@@ -1239,9 +1325,9 @@ function AuthScreen({ onLogin, dark }: { onLogin: (username: string, token: stri
 
 // ─── Screen 1: Home ───────────────────────────────────────────────────────────
 function HomeScreen({
-  dark, toggle, profile, setProfile, isSearching, connectToServer, createdRoomCode, cancelMatchmaking, onLogout, token, profileLoaded, friends, onSendInvite, betAmount, setBetAmount
+  go, dark, startEditing, onEditingStarted, profile, setProfile, isSearching, connectToServer, createdRoomCode, cancelMatchmaking, onLogout, token, profileLoaded, friends, onSendInvite, betAmount, setBetAmount
 }: {
-  go:(s:Screen)=>void; dark:boolean; toggle:()=>void; profile:UserProfile; setProfile:React.Dispatch<React.SetStateAction<UserProfile>>;
+  go:(s:Screen)=>void; dark:boolean; startEditing:boolean; onEditingStarted:()=>void; profile:UserProfile; setProfile:React.Dispatch<React.SetStateAction<UserProfile>>;
   isSearching:boolean; connectToServer:(action:"QUICK_MATCH"|"BOT_MATCH"|"CREATE_ROOM"|"JOIN_ROOM", code?:string)=>void;
   createdRoomCode:string|null; cancelMatchmaking:()=>void; onLogout:()=>void; token:string|null; profileLoaded:boolean;
   friends:FriendItem[]; onSendInvite:(friendUserId:number, roomCode:string)=>void;
@@ -1250,14 +1336,13 @@ function HomeScreen({
   const c = C(dark);
   const [joinCode, setJoinCode] = useState("");
   const [isEditing, setIsEditing] = useState(false);
-  const [tempName, setTempName] = useState(profile.name);
+  const [tempName, setTempName] = useState(nameOf(profile.name));
   const [tempAvatar, setTempAvatar] = useState(profile.avatar || "");
   const [tempCountry, setTempCountry] = useState(profile.country || "TR");
   
   const [showDailyPopup, setShowDailyPopup] = useState(false);
   const [pendingReward, setPendingReward] = useState({ xp: 0, tokens: 0, streak: 1 });
   const [caseAnim, setCaseAnim] = useState<{status: "shaking" | "revealed", reward: number} | null>(null);
-  const [soundOn, setSoundOn] = useState(() => localStorage.getItem("yatzy_sound") !== "off");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loadingLb, setLoadingLb] = useState(false);
@@ -1277,7 +1362,7 @@ function HomeScreen({
         });
         if (!res.ok) {
           const msg = await res.text();
-          emitToast(msg || "Hesap silinemedi");
+          emitToast(msg || t("Hesap silinemedi"));
           setDeletingAccount(false);
           return;
         }
@@ -1289,21 +1374,21 @@ function HomeScreen({
       localStorage.removeItem("yatzy_device_id");
       setIsEditing(false);
       setShowDeleteConfirm(false);
-      emitToast("Hesabınız ve tüm verileriniz kalıcı olarak silindi.");
+      emitToast(t("Hesabınız ve tüm verileriniz kalıcı olarak silindi."));
       onLogout();
     } catch {
-      emitToast("Sunucuya ulaşılamadı.");
+      emitToast(t("Sunucuya ulaşılamadı."));
     } finally {
       setDeletingAccount(false);
     }
   };
 
-  const toggleSound = () => {
-    const next = !soundOn;
-    setSoundOn(next);
-    localStorage.setItem("yatzy_sound", next ? "on" : "off");
-    if (next) sfx.lock();
-  };
+  // Ayarlar ekranındaki "Profili Düzenle" buraya yönlendirir
+  useEffect(() => {
+    if (!startEditing) return;
+    setIsEditing(true);
+    onEditingStarted();
+  }, [startEditing, onEditingStarted]);
 
   const openLeaderboard = async () => {
     setShowLeaderboard(true);
@@ -1320,11 +1405,13 @@ function HomeScreen({
     }
   };
 
+  // Düzenleyici her açıldığında kayıtlı profilden başlar; Kaydet'e basılmadan yapılan değişiklikler atılır
   useEffect(() => {
-    setTempName(profile.name);
+    if (!isEditing) return;
+    setTempName(nameOf(profile.name));
     setTempAvatar(profile.avatar || "");
     setTempCountry(profile.country || "TR");
-  }, [profile.name, profile.avatar, profile.country]);
+  }, [isEditing, profile.name, profile.avatar, profile.country]);
 
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1412,6 +1499,8 @@ function HomeScreen({
   const saveProfile = async () => {
     const trimmed = tempName.trim();
     if (trimmed.length >= 2) {
+      // Etiket korunur; sunucu yalnızca adı değiştirir ve son hâlini döndürür
+      let handle = trimmed + tagOf(profile.name);
       if (token && !token.startsWith("guest_token_")) {
         const res = await fetch(`${API_BASE}/profile/update`, {
           method: "POST",
@@ -1427,14 +1516,16 @@ function HomeScreen({
         });
         if (!res.ok) {
           const msg = await res.text();
-          emitToast(msg || "Profil güncellenemedi");
+          emitToast(msg || t("Profil güncellenemedi"));
           return;
         }
+        const updated = await res.json().catch(() => null);
+        if (updated?.username) handle = updated.username;
       }
-      localStorage.setItem("yatzy_username", trimmed);
+      localStorage.setItem("yatzy_username", handle);
       setProfile(prev => ({
         ...prev,
-        name: trimmed,
+        name: handle,
         seed: trimmed.substring(0,2).toUpperCase(),
         avatar: tempAvatar,
         country: tempCountry
@@ -1505,8 +1596,8 @@ function HomeScreen({
             <div style={{ position:"absolute", bottom:-2, right:-4, background:c.gold, color:"#fff", fontSize:9, fontWeight:700, borderRadius:6, padding:"1px 5px", border:`1.5px solid ${c.bg}` }}>{profile.level}</div>
           </div>
           <div>
-            <p style={{ fontSize:11, color:c.textSub, display:"flex", alignItems:"center", gap:4 }}>Hoşgeldin <Edit3 size={10}/></p>
-            <p style={{ fontSize:16, color:c.text, fontWeight:700 }}>{profile.name}</p>
+            <p style={{ fontSize:11, color:c.textSub, display:"flex", alignItems:"center", gap:4 }}>{t("Hoşgeldin")} <Edit3 size={10}/></p>
+            <p style={{ fontSize:16, color:c.text, fontWeight:700 }}><Handle value={profile.name} tagColor={c.textSub} /></p>
           </div>
         </div>
         
@@ -1515,11 +1606,8 @@ function HomeScreen({
             <span style={{ fontSize:14 }}>🪙</span>
             <span style={{ fontSize:13, fontWeight:800, color:c.gold }}>{profile.tokens}</span>
           </div>
-          <button onClick={toggleSound} title={soundOn ? "Sesi Kapat" : "Sesi Aç"} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:10, padding:"7px 9px", cursor:"pointer", display:"flex", fontSize:14 }}>
-            {soundOn ? "🔊" : "🔇"}
-          </button>
-          <button onClick={toggle} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:10, padding:8, cursor:"pointer", display:"flex" }}>
-            {dark ? <Sun size={16} color={c.accent}/> : <Moon size={16} color={c.accent}/>}
+          <button type="button" onClick={() => go("settings")} aria-label={t("Ayarlar")} title={t("Ayarlar")} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, borderRadius:10, padding:8, cursor:"pointer", display:"flex" }}>
+            <SettingsIcon size={16} color={c.accent}/>
           </button>
         </div>
       </div>
@@ -1534,15 +1622,15 @@ function HomeScreen({
         <h1 style={{ fontSize:24, fontWeight:800, color:c.text, letterSpacing:"-0.02em" }}>
           Yat <span style={{ color:c.accent }}>Dice</span>
         </h1>
-        <p style={{ fontSize:11, color:c.textSub, marginTop:2 }}>Zar at. Puan yap. Kazan.</p>
+        <p style={{ fontSize:11, color:c.textSub, marginTop:2 }}>{t("Zar at. Puan yap. Kazan.")}</p>
       </div>
 
       {/* XP ÇUBUĞU */}
       <div style={{ padding:"0 20px 18px" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"13px 16px", boxShadow:`0 2px 8px ${c.shadow}` }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:7 }}>
-            <span style={{ fontSize:11, color:c.textSub }}>Seviye {profile.level}</span>
-            <span style={{ fontSize:11, color:c.accent, fontWeight:600 }}>{xpInLevel} / 1.000 XP (Top: {profile.xp})</span>
+            <span style={{ fontSize:11, color:c.textSub }}>{t("Seviye")} {profile.level}</span>
+            <span style={{ fontSize:11, color:c.accent, fontWeight:600 }}>{xpInLevel} {t("/ 1.000 XP (Top:")} {profile.xp})</span>
           </div>
           <div style={{ height:5, background:c.panelAlt, borderRadius:99, overflow:"hidden" }}>
             <motion.div initial={{ width:0 }} animate={{ width:`${(xpInLevel/1000)*100}%` }} transition={{ duration:1.2, ease:"easeOut", delay:0.3 }}
@@ -1560,11 +1648,11 @@ function HomeScreen({
         }}>
            <span style={{ fontSize:24, filter: profile.cases===0?"grayscale(100%) opacity(0.5)":"" }}>📦</span>
            <span style={{ fontSize:14, fontWeight:700, color: profile.cases>0 ? c.gold : c.textSub }}>
-             {profile.cases > 0 ? `${profile.cases} Kasa Açılmayı Bekliyor` : "Kasa Yok"}
+             {profile.cases > 0 ? t("{0} Kasa Açılmayı Bekliyor", profile.cases) : t("Kasa Yok")}
            </span>
         </motion.button>
         <span style={{ fontSize:9.5, color:c.textSub, textAlign:"center" }}>
-          Kasa olasılığı (sanal jeton): 50–99 %33,3 · 100–149 %33,3 · 150–199 %33,4
+          {t("Kasa olasılığı (sanal jeton): 50–99 %33,3 · 100–149 %33,3 · 150–199 %33,4")}
         </span>
       </div>
 
@@ -1573,10 +1661,10 @@ function HomeScreen({
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
             <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>
-              Masa Giriş Jetonu
+              {t("Masa Giriş Jetonu")}
             </span>
             <span style={{ fontSize:11, fontWeight:800, color:c.gold, whiteSpace:"nowrap" }}>
-              {betAmount === 0 ? "Dostluk Maçı" : `Ödül: ${betAmount * 2} 🪙`}
+              {betAmount === 0 ? t("Dostluk Maçı") : t("Ödül: {0} 🪙", betAmount * 2)}
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
@@ -1599,7 +1687,7 @@ function HomeScreen({
                     transition: "0.15s"
                   }}
                 >
-                  {b === 0 ? "Ücretsiz" : `🪙 ${b}`}
+                  {b === 0 ? t("Ücretsiz") : `🪙 ${b}`}
                 </button>
               );
             })}
@@ -1618,7 +1706,7 @@ function HomeScreen({
             {isSearching && !createdRoomCode ? (
               <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} style={{ display:"flex" }}><RotateCcw size={17} strokeWidth={2.5}/></motion.div>
             ) : <Zap size={17} strokeWidth={2.5}/>}
-            {isSearching && !createdRoomCode ? "ARANIYOR..." : "HIZLI MAÇ"}
+            {isSearching && !createdRoomCode ? t("ARANIYOR...") : t("HIZLI MAÇ")}
           </motion.button>
 
           {!isSearching && !createdRoomCode && (
@@ -1632,7 +1720,7 @@ function HomeScreen({
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 7
               }}
             >
-              <span>🤖</span> BOTA KARŞI
+              <span>🤖</span> {t("BOTA KARŞI")}
             </motion.button>
           )}
 
@@ -1649,7 +1737,7 @@ function HomeScreen({
 
         <div style={{ display:"flex", alignItems:"center", gap:8, margin:"16px 0" }}>
             <div style={{flex:1, height:1, background:c.border}}></div>
-            <span style={{fontSize:10, color:c.textFaint, fontWeight:"bold", letterSpacing:"0.1em"}}>ÖZEL ODA</span>
+            <span style={{fontSize:10, color:c.textFaint, fontWeight:"bold", letterSpacing:"0.1em"}}>{t("ÖZEL ODA")}</span>
             <div style={{flex:1, height:1, background:c.border}}></div>
         </div>
         
@@ -1659,27 +1747,27 @@ function HomeScreen({
                   <X size={18} />
               </button>
               
-              <p style={{ fontSize: 11, color: c.textSub, marginBottom: 4, fontWeight: 600 }}>Oda Kodunuz (Arkadaşınıza Gönderin):</p>
+              <p style={{ fontSize: 11, color: c.textSub, marginBottom: 4, fontWeight: 600 }}>{t("Oda Kodunuz (Arkadaşınıza Gönderin):")}</p>
               <h2 style={{ letterSpacing: 8, color: c.accent, margin:"8px 0" }}>{createdRoomCode}</h2>
               <div style={{ display:"flex", justifyContent:"center", gap: 8, marginTop: 10, alignItems:"center" }}>
                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} style={{ display:"flex" }}>
                    <RotateCcw size={14} color={c.accent}/>
                  </motion.div>
-                 <span style={{ fontSize:11, color:c.accent, fontWeight:600 }}>Arkadaşınız bekleniyor...</span>
+                 <span style={{ fontSize:11, color:c.accent, fontWeight:600 }}>{t("Arkadaşınız bekleniyor...")}</span>
               </div>
 
               {friends.length > 0 && (
                 <div style={{ marginTop: 14, borderTop: `1px solid ${c.border}`, paddingTop: 10, textAlign: "left" }}>
-                  <p style={{ fontSize: 10, color: c.textSub, fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>Arkadaşını Odaya Davet Et:</p>
+                  <p style={{ fontSize: 10, color: c.textSub, fontWeight: 700, marginBottom: 6, textTransform: "uppercase" }}>{t("Arkadaşını Odaya Davet Et:")}</p>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 110, overflowY: "auto" }}>
                     {friends.map(f => (
                       <div key={f.userId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: c.panel, padding: "6px 10px", borderRadius: 10, border: `1px solid ${c.border}` }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: c.text }}>{f.username}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: c.text }}><Handle value={f.username} tagColor={c.textSub} /></span>
                         <button
                           onClick={() => onSendInvite(f.userId, createdRoomCode)}
                           style={{ background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
                         >
-                          Davet Et
+                          {t("Davet Et")}
                         </button>
                       </div>
                     ))}
@@ -1694,13 +1782,13 @@ function HomeScreen({
                 onClick={() => connectToServer("CREATE_ROOM")} 
                 disabled={isSearching}
                 style={{ width:"100%", padding:"15px", background:c.panelAlt, color:c.text, fontSize:14, fontWeight:700, borderRadius:12, border:`1px solid ${c.border}`, cursor:isSearching?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity: isSearching ? 0.6 : 1 }}>
-                <Users size={17}/> ODA KUR
+                <Users size={17}/> {t("ODA KUR")}
               </motion.button>
 
               <div style={{ display:"flex", gap:8 }}>
                   <input 
                     type="text" 
-                    placeholder="KOD GİRİN (Örn: X7K9A)" 
+                    placeholder={t("KOD GİRİN (Örn: X7K9A)")} 
                     maxLength={5}
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
@@ -1711,7 +1799,7 @@ function HomeScreen({
                     onClick={() => joinCode.length === 5 && connectToServer("JOIN_ROOM", joinCode)}
                     disabled={isSearching || joinCode.length !== 5}
                     style={{ padding:"14px 20px", background: joinCode.length === 5 ? c.accent : c.panelAlt, color: joinCode.length === 5 ? (dark?c.bg:"#fff") : c.textFaint, borderRadius:12, border:`1px solid ${joinCode.length === 5 ? "transparent" : c.border}`, cursor: joinCode.length === 5 ? "pointer" : "not-allowed", fontWeight:800, fontSize:13 }}
-                  >KATIL</motion.button>
+                  >{t("KATIL")}</motion.button>
               </div>
            </div>
         )}
@@ -1719,12 +1807,12 @@ function HomeScreen({
 
       {/* DİNAMİK İSTATİSTİKLER */}
       <div style={{ padding:"18px 20px 0" }}>
-        <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, marginBottom:10 }}>İstatistikler</p>
+        <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, marginBottom:10 }}>{t("İstatistikler")}</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
           {[
-            ["Galibiyet", profile.stats.wins],
-            ["Oran", `%${winRate}`],
-            ["Rekor", profile.stats.highScore]
+            [t("Galibiyet"), profile.stats.wins],
+            [t("Oran"), `%${winRate}`],
+            [t("Rekor"), profile.stats.highScore]
           ].map(([l,v])=>(
             <div key={l} style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:12, padding:"12px 10px", textAlign:"center" }}>
               <p style={{ fontSize:19, fontWeight:700, color:c.accent }}>{v}</p>
@@ -1745,7 +1833,7 @@ function HomeScreen({
               color: c.text, fontSize: 12, fontWeight: 700
             }}
           >
-            <span>🏆</span> Liderlik Tablosu
+            <span>🏆</span> {t("Liderlik Tablosu")}
           </motion.button>
           <motion.button
             whileTap={{ scale: 0.97 }}
@@ -1757,7 +1845,7 @@ function HomeScreen({
               color: c.text, fontSize: 12, fontWeight: 700
             }}
           >
-            <span>📖</span> Kurallar & Puanlar
+            <span>📖</span> {t("Kurallar & Puanlar")}
           </motion.button>
         </div>
       </div>
@@ -1777,16 +1865,16 @@ function HomeScreen({
             >
               <div style={{ padding: "16px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
                 <div>
-                  <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>🏆 Küresel Liderlik Tablosu</h3>
-                  <p style={{ color: c.textSub, fontSize: 11, margin: "2px 0 0" }}>En çok galibiyet ve XP toplayan ilk 20 oyuncu</p>
+                  <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>{t("🏆 Küresel Liderlik Tablosu")}</h3>
+                  <p style={{ color: c.textSub, fontSize: 11, margin: "2px 0 0" }}>{t("En çok galibiyet ve XP toplayan ilk 20 oyuncu")}</p>
                 </div>
                 <button onClick={() => setShowLeaderboard(false)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
               </div>
               <div style={{ padding: 14, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
                 {loadingLb ? (
-                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>Sıralama yükleniyor...</p>
+                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>{t("Sıralama yükleniyor...")}</p>
                 ) : leaderboard.length === 0 ? (
-                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>Henüz sıralama verisi yok.</p>
+                  <p style={{ color: c.textSub, fontSize: 12, textAlign: "center", padding: "24px 0" }}>{t("Henüz sıralama verisi yok.")}</p>
                 ) : (
                   leaderboard.map(item => {
                     const isMe = item.username === profile.name;
@@ -1803,26 +1891,26 @@ function HomeScreen({
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span style={{ width: 26, fontSize: item.rank <= 3 ? 17 : 12, fontWeight: 800, color: c.gold, textAlign: "center" }}>{medal}</span>
-                          <Av seed={item.username} size={32} dark={dark} avatar={item.avatar} country={item.country} active={isMe} />
+                          <Av seed={nameOf(item.username)} size={32} dark={dark} avatar={item.avatar} country={item.country} active={isMe} />
                           <div>
                             <p style={{ fontSize: 13, fontWeight: 800, color: c.text, margin: 0 }}>
-                              {item.username} {isMe && <span style={{ fontSize: 10, color: c.accent }}>(Sen)</span>}
+                              <Handle value={item.username} tagColor={c.textSub} /> {isMe && <span style={{ fontSize: 10, color: c.accent }}>{t("(Sen)")}</span>}
                             </p>
                             <p style={{ fontSize: 10, color: c.textSub, margin: "1px 0 0" }}>
-                              Sv.{computeLevel(item.xp)} • Rekor: {item.highScore}
+                              {t("Sv.")}{computeLevel(item.xp)} {t("• Rekor:")} {item.highScore}
                             </p>
                           </div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <div style={{ textAlign: "right" }}>
-                            <p style={{ fontSize: 13, fontWeight: 800, color: c.accent, margin: 0 }}>{item.wins} Galibiyet</p>
+                            <p style={{ fontSize: 13, fontWeight: 800, color: c.accent, margin: 0 }}>{item.wins} {t("Galibiyet")}</p>
                             <p style={{ fontSize: 10, color: c.gold, fontWeight: 700, margin: 0 }}>{item.xp} XP</p>
                           </div>
                           {!isMe && (
                             <button
                               type="button"
-                              aria-label={`${item.username} profilini şikâyet et`}
-                              title="Profili şikâyet et"
+                              aria-label={t("{0} profilini şikâyet et", item.username)}
+                              title={t("Profili şikâyet et")}
                               onClick={() => reportProfile(item.username)}
                               style={{ background: "none", border: "none", padding: 4, color: c.textSub, cursor: "pointer", display: "flex" }}
                             >
@@ -1854,27 +1942,27 @@ function HomeScreen({
               style={{ background: c.panel, borderRadius: 24, width: "100%", maxWidth: 365, maxHeight: "82vh", display: "flex", flexDirection: "column", border: `1px solid ${c.borderMid}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
             >
               <div style={{ padding: "16px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: c.panelAlt }}>
-                <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>📖 Nasıl Oynanır & Puan Tablosu</h3>
+                <h3 style={{ color: c.text, fontSize: 16, fontWeight: 800, margin: 0 }}>{t("📖 Nasıl Oynanır & Puan Tablosu")}</h3>
                 <button onClick={() => setShowRulesModal(false)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}><X size={18} /></button>
               </div>
               <div style={{ padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, fontSize: 12, color: c.textSub, lineHeight: 1.5 }}>
                 <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                  <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>🎲 Temel Akış (13 Tur)</p>
-                  Her turda zarları en fazla <b>3 kez</b> atabilirsin. İstediğin zarların üzerine dokunarak onları <b>kilitleyebilir</b> ve kalan zarları tekrar atabilirsin. Tur sonunda tabloda boş bir kategoriye puanını yazarsın.
+                  <p style={{ color: c.accent, fontWeight: 800, margin: "0 0 4px" }}>{t("🎲 Temel Akış (13 Tur)")}</p>
+                  {t("Her turda zarları en fazla")} <b>{t("3 kez")}</b> {t("atabilirsin. İstediğin zarların üzerine dokunarak onları")} <b>{t("kilitleyebilir")}</b> {t("ve kalan zarları tekrar atabilirsin. Tur sonunda tabloda boş bir kategoriye puanını yazarsın.")}
                 </div>
                 <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                  <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>📈 Üst Bölüm & +35 Bonus</p>
-                  <b>Birler – Altılar:</b> Sadece ilgili zarların toplamı yazılır.<br />
-                  Üst bölüm toplamın <b>63 veya üzeri</b> olursa anında <b>+35 Bonus Puan</b> kazanırsın!
+                  <p style={{ color: c.gold, fontWeight: 800, margin: "0 0 4px" }}>{t("📈 Üst Bölüm & +35 Bonus")}</p>
+                  <b>{t("Birler – Altılar:")}</b> {t("Sadece ilgili zarların toplamı yazılır.")}<br />
+                  {t("Üst bölüm toplamın")} <b>{t("63 veya üzeri")}</b> {t("olursa anında")} <b>{t("+35 Bonus Puan")}</b> {t("kazanırsın!")}
                 </div>
                 <div style={{ background: c.bg, padding: 12, borderRadius: 12, border: `1px solid ${c.border}` }}>
-                  <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>🔥 Alt Bölüm Kombinasyonları</p>
-                  • <b>Üçlü / Dörtlü:</b> En az 3 veya 4 aynı zar varsa tüm zarların toplamı.<br />
-                  • <b>Full House (25 Puan):</b> 3 aynı + 2 aynı zar (Örn: 4-4-4-2-2).<br />
-                  • <b>Küçük Sıra (30 Puan):</b> Ardışık 4 zar (1-2-3-4, 2-3-4-5 veya 3-4-5-6).<br />
-                  • <b>Büyük Sıra (40 Puan):</b> Ardışık 5 zar (1-2-3-4-5 veya 2-3-4-5-6).<br />
-                  • <b>YAT (50 Puan):</b> 5 zarın tamamı aynı! (Örn: 6-6-6-6-6).<br />
-                  • <b>Şans:</b> Koşulsuz tüm 5 zarın toplamı.
+                  <p style={{ color: c.text, fontWeight: 800, margin: "0 0 4px" }}>{t("🔥 Alt Bölüm Kombinasyonları")}</p>
+                  • <b>{t("Üçlü / Dörtlü:")}</b> {t("En az 3 veya 4 aynı zar varsa tüm zarların toplamı.")}<br />
+                  • <b>{t("Full House (25 Puan):")}</b> {t("3 aynı + 2 aynı zar (Örn: 4-4-4-2-2).")}<br />
+                  • <b>{t("Küçük Sıra (30 Puan):")}</b> {t("Ardışık 4 zar (1-2-3-4, 2-3-4-5 veya 3-4-5-6).")}<br />
+                  • <b>{t("Büyük Sıra (40 Puan):")}</b> {t("Ardışık 5 zar (1-2-3-4-5 veya 2-3-4-5-6).")}<br />
+                  • <b>{t("YAT (50 Puan):")}</b> {t("5 zarın tamamı aynı! (Örn: 6-6-6-6-6).")}<br />
+                  • <b>{t("Şans:")}</b> {t("Koşulsuz tüm 5 zarın toplamı.")}
                 </div>
               </div>
             </motion.div>
@@ -1898,30 +1986,30 @@ function HomeScreen({
                 </div>
                 
                 <h3 style={{ color:c.text, fontSize:22, fontWeight:800, margin:"10px 0 0", textAlign:"center" }}>
-                  <span style={{ color:c.accent }}>{pendingReward.streak}. Gün</span> Giriş Ödülü!
+                  <span style={{ color:c.accent }}>{t("{0}. Gün", pendingReward.streak)}</span> {t("Giriş Ödülü!")}
                 </h3>
                 
                 <p style={{ fontSize:13, color:c.textSub, textAlign:"center", lineHeight:1.5 }}>
-                  Her gün oyuna girerek serini bozma, <br/>ödüllerini katlayarak artır!
+                  {t("Her gün oyuna girerek serini bozma,")} <br/>{t("ödüllerini katlayarak artır!")}
                 </p>
 
                 <div style={{ display:"flex", gap:12, width:"100%", marginTop:10 }}>
                    <div style={{ flex:1, background:c.accentBg, border:`1px solid ${c.accentRing}`, borderRadius:16, padding:"16px", display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
                       <span style={{ fontSize:28 }}>✨</span>
                       <span style={{ fontSize:18, fontWeight:800, color:c.accent }}>+{pendingReward.xp}</span>
-                      <span style={{ fontSize:10, fontWeight:700, color:c.textSub, textTransform:"uppercase" }}>XP Puanı</span>
+                      <span style={{ fontSize:10, fontWeight:700, color:c.textSub, textTransform:"uppercase" }}>{t("XP Puanı")}</span>
                    </div>
                    <div style={{ flex:1, background:c.goldBg, border:`1px solid rgba(201,168,76,0.3)`, borderRadius:16, padding:"16px", display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
                       <span style={{ fontSize:28 }}>🪙</span>
                       <span style={{ fontSize:18, fontWeight:800, color:c.gold }}>+{pendingReward.tokens}</span>
-                      <span style={{ fontSize:10, fontWeight:700, color:c.textSub, textTransform:"uppercase" }}>Jeton</span>
+                      <span style={{ fontSize:10, fontWeight:700, color:c.textSub, textTransform:"uppercase" }}>{t("Jeton")}</span>
                    </div>
                 </div>
 
                 <motion.button whileTap={{scale:0.95}} onClick={claimDailyReward} style={{ 
                   width:"100%", padding:"18px", marginTop:10, borderRadius:16, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:16, letterSpacing:"0.05em", boxShadow:`0 8px 20px ${c.accentBg}` 
                 }}>
-                  Harika, Al ve Kapat
+                  {t("Harika, Al ve Kapat")}
                 </motion.button>
              </motion.div>
           </motion.div>
@@ -1956,14 +2044,14 @@ function HomeScreen({
                 <div style={{ fontSize:100, lineHeight:1 }}>🪙</div>
                 <div style={{ textAlign:"center" }}>
                   <h2 style={{ color:c.gold, fontSize:36, fontWeight:900, margin:0 }}>+{caseAnim.reward}</h2>
-                  <p style={{ color:c.textSub, fontSize:14, fontWeight:700, margin:"4px 0 0", textTransform:"uppercase", letterSpacing:"0.1em" }}>Jeton Kazandın</p>
+                  <p style={{ color:c.textSub, fontSize:14, fontWeight:700, margin:"4px 0 0", textTransform:"uppercase", letterSpacing:"0.1em" }}>{t("Jeton Kazandın")}</p>
                 </div>
                 <motion.button 
                   whileTap={{scale:0.95}} 
                   onClick={claimCaseReward} 
                   style={{ width:"100%", padding:"16px", borderRadius:16, background:c.gold, color:"#000", border:"none", cursor:"pointer", fontWeight:800, fontSize:16, marginTop:10 }}
                 >
-                  Topla
+                  {t("Topla")}
                 </motion.button>
               </motion.div>
             )}
@@ -1977,7 +2065,7 @@ function HomeScreen({
           <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(6px)" }}>
              <motion.div initial={{ scale:0.95, y:20 }} animate={{ scale:1, y:0 }} exit={{ scale:0.95, y:20 }} style={{ background:c.panel, borderRadius:24, width:"100%", maxWidth:350, maxHeight:"88vh", overflowY:"auto", padding:22, display:"flex", flexDirection:"column", gap:14, border:`1px solid ${c.border}`, boxShadow:"0 20px 50px rgba(0,0,0,0.5)" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <h3 style={{ color:c.text, fontSize:18, fontWeight:800, margin:0 }}>Profili Özelleştir</h3>
+                  <h3 style={{ color:c.text, fontSize:18, fontWeight:800, margin:0 }}>{t("Profili Özelleştir")}</h3>
                   <button onClick={()=>setIsEditing(false)} style={{ background:"none", border:"none", color:c.textSub, cursor:"pointer" }}><X size={20}/></button>
                 </div>
 
@@ -1985,19 +2073,19 @@ function HomeScreen({
                    <Av seed={tempName || "U"} size={72} dark={dark} avatar={tempAvatar} country={tempCountry} active={true} />
                    <div style={{ display:"flex", gap:8 }}>
                      <label style={{ background:c.accentBg, border:`1px solid ${c.accentRing}`, color:c.accent, padding:"6px 12px", borderRadius:10, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                       📷 Fotoğraf Yükle
+                       {t("📷 Fotoğraf Yükle")}
                        <input type="file" accept="image/*" onChange={handleAvatarFileChange} style={{ display:"none" }} />
                      </label>
                      {tempAvatar && (
                        <button type="button" onClick={() => setTempAvatar("")} style={{ background:c.panelAlt, border:`1px solid ${c.border}`, color:c.textSub, padding:"6px 10px", borderRadius:10, fontSize:11, fontWeight:600, cursor:"pointer" }}>
-                         Sıfırla
+                         {t("Sıfırla")}
                        </button>
                      )}
                    </div>
                 </div>
 
                 <div>
-                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Hazır Avatar Seç</p>
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>{t("Hazır Avatar Seç")}</p>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(6, 1fr)", gap:6 }}>
                     {PRESET_AVATARS.map(em => (
                       <button
@@ -2017,29 +2105,29 @@ function HomeScreen({
                 </div>
 
                 <div>
-                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Ülke / Bayrak</p>
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>{t("Ülke / Bayrak")}</p>
                   <select
                     value={tempCountry}
                     onChange={e => setTempCountry(e.target.value)}
                     style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"11px 14px", borderRadius:12, fontSize:14, fontWeight:600, outline:"none" }}
                   >
                     {COUNTRIES.map(co => (
-                      <option key={co.code} value={co.code}>{co.flag} {co.name} ({co.code})</option>
+                      <option key={co.code} value={co.code}>{co.flag} {t(co.name)} ({co.code})</option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>Kullanıcı Adı</p>
-                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:APP_FONT, fontWeight:600 }} placeholder="Adınızı girin" />
+                  <p style={{ fontSize:11, color:c.textSub, marginBottom:6, fontWeight:700 }}>{t("Kullanıcı Adı")}{tagOf(profile.name) && <span style={{ color:c.accent }}> · {t("etiketin {0}", tagOf(profile.name))}</span>}</p>
+                  <input value={tempName} onChange={e=>setTempName(e.target.value)} style={{ width:"100%", boxSizing:"border-box", background:c.bg, border:`1px solid ${c.border}`, color:c.text, padding:"12px 16px", borderRadius:12, fontSize:15, outline:"none", fontFamily:APP_FONT, fontWeight:600 }} placeholder={t("Adınızı girin")} />
                 </div>
 
-                <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:14 }}>Değişiklikleri Kaydet</button>
+                <button onClick={saveProfile} style={{ width:"100%", padding:14, marginTop:4, borderRadius:12, background:c.accent, color:dark?c.bg:"#fff", border:"none", cursor:"pointer", fontWeight:800, fontSize:14 }}>{t("Değişiklikleri Kaydet")}</button>
                 <button type="button" onClick={() => setShowLegalModal(true)} style={{ width:"100%", padding:11, borderRadius:12, background:c.panelAlt, color:c.textSub, border:`1px solid ${c.border}`, cursor:"pointer", fontWeight:700, fontSize:12 }}>
-                   📜 Gizlilik Politikası, EULA & Kasa Olasılıkları
+                   {t("📜 Gizlilik Politikası, EULA & Kasa Olasılıkları")}
                 </button>
                 <button onClick={onLogout} style={{ width:"100%", padding:12, borderRadius:12, background:"rgba(255, 71, 87, 0.1)", color:"#ff4757", border:`1px solid rgba(255, 71, 87, 0.3)`, cursor:"pointer", fontWeight:700, fontSize:13 }}>
-                   Çıkış Yap
+                   {t("Çıkış Yap")}
                 </button>
 
                 {/* Apple Guideline 5.1.1(v) & Google Play Zorunlu Hesap Silme Bölümü */}
@@ -2049,19 +2137,19 @@ function HomeScreen({
                     onClick={() => setShowDeleteConfirm(true)}
                     style={{ width:"100%", padding:10, borderRadius:10, background:"transparent", color:c.textFaint, border:`1px dashed ${c.border}`, cursor:"pointer", fontWeight:600, fontSize:11 }}
                   >
-                    🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil
+                    {t("🗑️ Hesabımı ve Verilerimi Kalıcı Olarak Sil")}
                   </button>
                 ) : (
                   <div style={{ background:"rgba(192,57,43,0.12)", border:`1px solid ${c.danger}`, borderRadius:12, padding:12, display:"flex", flexDirection:"column", gap:8 }}>
                     <p style={{ fontSize:11, color:c.text, fontWeight:700, margin:0, lineHeight:1.4 }}>
-                      ⚠️ Hesabınız, tüm istatistikleriniz, arkadaşlarınız ve koleksiyonunuz sunucudan <b>kalıcı olarak silinecektir</b>. Onaylıyor musunuz?
+                      {t("⚠️ Hesabınız, tüm istatistikleriniz, arkadaşlarınız ve koleksiyonunuz sunucudan")} <b>{t("kalıcı olarak silinecektir")}</b>{t(". Onaylıyor musunuz?")}
                     </p>
                     <div style={{ display:"flex", gap:8 }}>
                       <button type="button" onClick={() => setShowDeleteConfirm(false)} style={{ flex:1, padding:"9px", borderRadius:8, background:c.panelAlt, color:c.text, border:`1px solid ${c.border}`, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                        Vazgeç
+                        {t("Vazgeç")}
                       </button>
                       <button type="button" disabled={deletingAccount} onClick={handleDeleteMyAccount} style={{ flex:1, padding:"9px", borderRadius:8, background:c.danger, color:"#fff", border:"none", fontSize:11, fontWeight:800, cursor:"pointer" }}>
-                        {deletingAccount ? "Siliniyor..." : "Evet, Kalıcı Sil"}
+                        {deletingAccount ? t("Siliniyor...") : t("Evet, Kalıcı Sil")}
                       </button>
                     </div>
                   </div>
@@ -2156,7 +2244,7 @@ function ShopScreen({
         });
         if (!res.ok) {
           const errTxt = await res.text();
-          emitToast(errTxt || "Satın alma başarısız!");
+          emitToast(errTxt || t("Satın alma başarısız!"));
           return;
         }
         sfx.win();
@@ -2185,8 +2273,8 @@ function ShopScreen({
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column" }}>
       <div style={{ display:"flex", alignItems:"center", gap:12, padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
         <div>
-          <h2 style={{ fontSize:20, fontWeight:800, color:c.text }}>Koleksiyon</h2>
-          <p style={{ fontSize:12, color:c.textSub }}>Zara tıklayarak 3D incele ve koleksiyonuna kat</p>
+          <h2 style={{ fontSize:20, fontWeight:800, color:c.text }}>{t("Koleksiyon")}</h2>
+          <p style={{ fontSize:12, color:c.textSub }}>{t("Zara tıklayarak 3D incele ve koleksiyonuna kat")}</p>
         </div>
       </div>
 
@@ -2202,14 +2290,14 @@ function ShopScreen({
             border:`1px solid ${c.borderMid}`, borderRadius:10,
             color:dark?"#fff":c.text, fontSize:13, fontWeight:600, fontFamily:APP_FONT, cursor:rolling?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6, position:"relative", zIndex:1, backdropFilter:"blur(5px)",
           }}>
-            <RotateCcw size={13}/> Seçili Zarı Dene ({MAT[sel].name})
+            <RotateCcw size={13}/> {t("Seçili Zarı Dene ({0})", t(MAT[sel].name))}
           </button>
         </PremiumTray>
       </div>
 
       <div style={{ padding:"0 20px 32px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-           <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, margin:0 }}>Zar Marketi (Büyük Görmek İçin Tıkla)</p>
+           <p style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:c.textFaint, fontWeight:600, margin:0 }}>{t("Zar Marketi (Büyük Görmek İçin Tıkla)")}</p>
            <div style={{ display:"flex", alignItems:"center", gap:4, background:c.goldBg, padding:"4px 10px", borderRadius:12 }}>
              <span style={{ fontSize:16 }}>🪙</span>
              <p style={{ fontSize:13, color:c.gold, fontWeight:800, margin:0 }}>{profile.tokens}</p>
@@ -2232,10 +2320,10 @@ function ShopScreen({
               }}>
                 <Die3D state={initDie(5)} size={40} locked={false} mat={d}/>
                 <div style={{ flex:1, minWidth:0, paddingRight:12 }}>
-                  <p style={{ fontSize:13, fontWeight:700, color:c.text, margin:0 }}>{MAT[d].name}</p>
+                  <p style={{ fontSize:13, fontWeight:700, color:c.text, margin:0 }}>{t(MAT[d].name)}</p>
                   {isUnlocked ? (
                     <p style={{ fontSize:10, color:active?c.accent:c.textSub, marginTop:3, fontWeight:600 }}>
-                      {active ? "✓ Kullanımda" : "Sahipsin (İncele)"}
+                      {active ? t("✓ Kullanımda") : t("Sahipsin (İncele)")}
                     </p>
                   ) : (
                     <p style={{ fontSize:11, color:canAfford?c.gold:c.danger, fontWeight:800, marginTop:4, whiteSpace:"nowrap" }}>🪙 {price}</p>
@@ -2271,7 +2359,7 @@ function ShopScreen({
             >
               <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 10, fontWeight: 800, color: c.accent, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  3D Zar İnceleme
+                  {t("3D Zar İnceleme")}
                 </span>
                 <button onClick={() => setPreviewDie(null)} style={{ background: "none", border: "none", color: c.textSub, cursor: "pointer" }}>
                   <X size={20} />
@@ -2306,14 +2394,14 @@ function ShopScreen({
                     display: "flex", alignItems: "center", gap: 5
                   }}
                 >
-                  <RotateCcw size={12} /> Zarı At
+                  <RotateCcw size={12} /> {t("Zarı At")}
                 </button>
               </div>
 
               <div style={{ textAlign: "center" }}>
-                <h3 style={{ fontSize: 22, fontWeight: 900, color: c.text, margin: 0 }}>{MAT[previewDie].name} Zarı</h3>
+                <h3 style={{ fontSize: 22, fontWeight: 900, color: c.text, margin: 0 }}>{t("{0} Zarı", t(MAT[previewDie].name))}</h3>
                 <p style={{ fontSize: 12, color: c.textSub, margin: "6px 0 0", lineHeight: 1.45 }}>
-                  {MAT[previewDie].desc}
+                  {t(MAT[previewDie].desc)}
                 </p>
               </div>
 
@@ -2328,7 +2416,7 @@ function ShopScreen({
                       border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer"
                     }}
                   >
-                    Kapat
+                    {t("Kapat")}
                   </button>
                   <button
                     type="button"
@@ -2339,7 +2427,7 @@ function ShopScreen({
                       border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer"
                     }}
                   >
-                    {sel === previewDie ? "✓ Seçili Zar" : "Kuşan / Seç"}
+                    {sel === previewDie ? t("✓ Seçili Zar") : t("Kuşan / Seç")}
                   </button>
                 </div>
               ) : (
@@ -2348,13 +2436,13 @@ function ShopScreen({
                     width: "100%", background: c.goldBg, border: `1px solid ${c.gold}40`,
                     borderRadius: 14, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center"
                   }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: c.textSub }}>Satın Alma Fiyatı:</span>
-                    <span style={{ fontSize: 16, fontWeight: 900, color: c.gold }}>🪙 {DICE_PRICES[previewDie]} Jeton</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: c.textSub }}>{t("Satın Alma Fiyatı:")}</span>
+                    <span style={{ fontSize: 16, fontWeight: 900, color: c.gold }}>🪙 {DICE_PRICES[previewDie]} {t("Jeton")}</span>
                   </div>
 
                   {profile.tokens < DICE_PRICES[previewDie] && (
                     <p style={{ fontSize: 11, fontWeight: 700, color: c.danger, margin: "-4px 0 0" }}>
-                      Bu zarı almak için {DICE_PRICES[previewDie] - profile.tokens} 🪙 daha gerekiyor.
+                      {t("Bu zarı almak için")} {DICE_PRICES[previewDie] - profile.tokens} {t("🪙 daha gerekiyor.")}
                     </p>
                   )}
 
@@ -2368,7 +2456,7 @@ function ShopScreen({
                         border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 13, cursor: "pointer"
                       }}
                     >
-                      Alma (Vazgeç)
+                      {t("Alma (Vazgeç)")}
                     </button>
                     <button
                       type="button"
@@ -2382,7 +2470,7 @@ function ShopScreen({
                         cursor: profile.tokens >= DICE_PRICES[previewDie] ? "pointer" : "not-allowed"
                       }}
                     >
-                      {buying ? "Alınıyor..." : `Satın Al (🪙 ${DICE_PRICES[previewDie]})`}
+                      {buying ? t("Alınıyor...") : t("Satın Al (🪙 {0})", DICE_PRICES[previewDie])}
                     </button>
                   </div>
                 </>
@@ -2491,7 +2579,7 @@ function GameScreen({
     opponentMutedRef.current = next;
     if (next) {
       setChatPreview(null);
-      emitToast(`${opponentName || "Rakip"} susturuldu ve engellendi.`);
+      emitToast(t("{0} susturuldu ve engellendi.", opponentName || t("Rakip")));
       try {
         await fetch(`${API_BASE}/ugc/block`, {
           method: "POST",
@@ -2499,11 +2587,11 @@ function GameScreen({
             "Content-Type": "application/json",
             "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "")
           },
-          body: JSON.stringify({ username: opponentName || "Rakip" })
+          body: JSON.stringify({ username: opponentName || t("Rakip") })
         });
       } catch {}
     } else {
-      emitToast(`${opponentName || "Rakip"} için engel kaldırıldı.`);
+      emitToast(t("{0} için engel kaldırıldı.", opponentName || t("Rakip")));
       unblockOpponent();
     }
   };
@@ -2517,14 +2605,14 @@ function GameScreen({
           "Authorization": "Bearer " + (localStorage.getItem("yatzy_jwt_token") || "")
         },
         body: JSON.stringify({
-          username: opponentName || "Rakip",
+          username: opponentName || t("Rakip"),
           reason: "Oyun içi uygunsuz sohbet / davranış bildirimi"
         })
       });
     } catch {}
     setOpponentMuted(true);
     opponentMutedRef.current = true;
-    emitToast("Şikayetiniz güvenlik ekibine iletildi ve oyuncu susturuldu.");
+    emitToast(t("Şikayetiniz güvenlik ekibine iletildi ve oyuncu susturuldu."));
   };
   useEffect(() => {
     chatOpenRef.current = chatOpen;
@@ -2655,7 +2743,7 @@ function GameScreen({
         sfx.pop();
         const newMsg = {
           sender: data.sender || "p2",
-          senderName: data.senderName || "Oyuncu",
+          senderName: data.senderName || t("Oyuncu"),
           text: data.text || "",
           time: data.time || ""
         };
@@ -2667,7 +2755,7 @@ function GameScreen({
         }
       }
       else if (data.type === "SPAM_WARN") {
-        setSpamWarn(data.message || "Çok hızlı işlem yapıyorsunuz!");
+        setSpamWarn(data.message || t("Çok hızlı işlem yapıyorsunuz!"));
         setTimeout(() => setSpamWarn(null), 2200);
       }
       else if (data.type === "OPPONENT_LEFT") {
@@ -2696,9 +2784,9 @@ function GameScreen({
       else if (data.type === "SCORE_SELECTED") {
         const { key, pts, nextTurn, round: nextRound, p1Scores: s1, p2Scores: s2, p1Total: t1, p2Total: t2, gameOver, rewards } = data;
         sfx.score(pts);
-        const catLabel = CATS.find(cat => cat.key === key)?.label ?? key;
+        const catLabel = t(CATS.find(cat => cat.key === key)?.label ?? key);
         const id = ++popupIdRef.current;
-        setScorePopup({ pts, label: data.autoSelected ? `${catLabel} (Süre Doldu)` : catLabel, id });
+        setScorePopup({ pts, label: data.autoSelected ? t("{0} (Süre Doldu)", catLabel) : catLabel, id });
         setTimeout(() => setScorePopup(prev => prev?.id===id ? null : prev), 1800);
 
         if (s1) setP1Scores(s1);
@@ -2749,7 +2837,7 @@ function GameScreen({
           onMatchEnd({
             myName: profile.name,
             mySeed: profile.seed,
-            oppName: opponentName || "Rakip",
+            oppName: opponentName || t("Rakip"),
             oppSeed: (opponentName || "RK").substring(0, 2).toUpperCase(),
             myScores: myFinalScores,
             oppScores: oppFinalScores,
@@ -2800,7 +2888,7 @@ function GameScreen({
   const sendEmoji = (emoji: string) => {
     if (!ws || emojiCooldown) {
       if (emojiCooldown) {
-        setSpamWarn("Emoji spam koruması aktif (2sn).");
+        setSpamWarn(t("Emoji spam koruması aktif (2sn)."));
         setTimeout(() => setSpamWarn(null), 1800);
       }
       return;
@@ -2814,7 +2902,7 @@ function GameScreen({
     const txt = (customText ?? chatInput).trim();
     if (!ws || !txt) return;
     if (chatCooldown) {
-      setSpamWarn("Sohbet spam koruması: 2.5 saniye bekleyin.");
+      setSpamWarn(t("Sohbet spam koruması: 2.5 saniye bekleyin."));
       setTimeout(() => setSpamWarn(null), 2000);
       return;
     }
@@ -2831,7 +2919,7 @@ function GameScreen({
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column", position:"relative" }}>
       <div style={{ padding: "12px 12px 0", background: c.panel, display:"flex", justifyContent:"space-between", alignItems:"center", gap: 6 }}>
          <button onClick={handleLeave} style={{ background: "transparent", border: "none", color: c.danger, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 2, padding: 0, whiteSpace: "nowrap", flexShrink: 0 }}>
-           <ChevronLeft size={16} /> TERK ET
+           <ChevronLeft size={16} /> {t("TERK ET")}
          </button>
 
          {/* Hızlı Emoji ve Canlı Sohbet Çubuğu */}
@@ -2851,7 +2939,7 @@ function GameScreen({
            ))}
            <button
              onClick={toggleGameSound}
-             title={gameSoundOn ? "Sesi Kapat" : "Sesi Aç"}
+             title={gameSoundOn ? t("Sesi Kapat") : t("Sesi Aç")}
              style={{
                background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8,
                padding: "3px 5px", cursor: "pointer", fontSize: 12
@@ -2867,7 +2955,7 @@ function GameScreen({
                fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4
              }}
            >
-             💬 Sohbet
+             {t("💬 Sohbet")}
              {unreadChat > 0 && (
                <span style={{
                  position: "absolute", top: -5, right: -5, background: c.danger, color: "#fff",
@@ -2886,14 +2974,14 @@ function GameScreen({
            {/* SOL OYUNCU (HER ZAMAN SEN) */}
            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2, opacity: isMyTurn?1:0.4, transition:"0.3s" }}>
               <Av seed={profile.seed} size={32} active={isMyTurn} dark={dark}/>
-              <p style={{fontSize:10, fontWeight:"bold", color:isMyTurn?c.accent:c.text}}>{profile.name} ({myPlayerIndex === 1 ? p1Total : p2Total})</p>
+              <p style={{fontSize:10, fontWeight:"bold", color:isMyTurn?c.accent:c.text}}>{nameOf(profile.name)} ({myPlayerIndex === 1 ? p1Total : p2Total})</p>
            </div>
            {/* TUR, BAHİS VE SÜRE BİLGİSİ */}
            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-              <span style={{ fontSize: 10, color: c.textSub, fontWeight: "bold", textTransform: "uppercase" }}>TUR {round}/13</span>
+              <span style={{ fontSize: 10, color: c.textSub, fontWeight: "bold", textTransform: "uppercase" }}>{t("TUR")} {round}/13</span>
               {activeBet > 0 && (
                 <span style={{ fontSize: 10, fontWeight: 800, color: c.gold, background: c.goldBg, padding: "2px 8px", borderRadius: 10, border: `1px solid ${c.gold}40` }}>
-                  💰 Ödül: {activeBet * 2} 🪙
+                  {t("💰 Ödül:")} {activeBet * 2} 🪙
                 </span>
               )}
               <span style={{ fontSize: 11, fontWeight: 800, color: turnTimeLeft <= 8 ? c.danger : c.accent }}>⏱ {turnTimeLeft}s</span>
@@ -2901,7 +2989,7 @@ function GameScreen({
            {/* SAĞ OYUNCU (HER ZAMAN RAKİP) */}
            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2, opacity: !isMyTurn?1:0.4, transition:"0.3s" }}>
               <Av seed={opponentName ? opponentName.substring(0,2).toUpperCase() : "R"} size={32} active={!isMyTurn} dark={dark}/>
-              <p style={{fontSize:10, fontWeight:"bold", color:!isMyTurn?c.accent:c.text}}>{opponentName || "Rakip"} ({myPlayerIndex === 1 ? p2Total : p1Total})</p>
+              <p style={{fontSize:10, fontWeight:"bold", color:!isMyTurn?c.accent:c.text}}>{opponentName ? nameOf(opponentName) : t("Rakip")} ({myPlayerIndex === 1 ? p2Total : p1Total})</p>
            </div>
         </div>
 
@@ -2938,7 +3026,7 @@ function GameScreen({
                      return (
                          <React.Fragment key={cell.k}>
                            <div style={{ background: isHeader ? c.panelAlt : c.panel, padding: "0 6px", display: "flex", alignItems: "center", minWidth: 0 }}>
-                              <span style={{ fontSize: 11, fontWeight: isHeader?700:500, color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cell.l}</span>
+                              <span style={{ fontSize: 11, fontWeight: isHeader?700:500, color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(cell.l)}</span>
                            </div>
                            
                            {/* SOL SÜTUN (SEN) */}
@@ -3048,9 +3136,9 @@ function GameScreen({
                     <div style={{ background:"rgba(0,0,0,0.78)", borderRadius:16, padding:"10px 22px", display:"flex", flexDirection:"column", alignItems:"center", gap:2, backdropFilter:"blur(6px)", border:"1px solid rgba(255,255,255,0.12)" }}>
                       <span style={{ fontSize:10, color:"rgba(255,255,255,0.6)", fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", textAlign:"center" }}>{scorePopup.label}</span>
                       <span style={{ fontSize: scorePopup.pts===0 ? 22 : 32, fontWeight:900, fontFamily:APP_FONT, lineHeight:1, color: scorePopup.pts===0 ? "#e74c3c" : scorePopup.pts>=40 ? "#f5c842" : "#4aada6" }}>
-                        {scorePopup.pts===0 ? "Puan yok" : `+${scorePopup.pts}`}
+                        {scorePopup.pts===0 ? t("Puan yok") : `+${scorePopup.pts}`}
                       </span>
-                      {scorePopup.pts>0 && <span style={{ fontSize:11, color:"rgba(255,255,255,0.5)" }}>puan</span>}
+                      {scorePopup.pts>0 && <span style={{ fontSize:11, color:"rgba(255,255,255,0.5)" }}>{t("puan")}</span>}
                     </div>
                   </motion.div>
                 )}
@@ -3075,8 +3163,8 @@ function GameScreen({
             }}
           >
             {isMyTurn 
-              ? (rollsLeft===3 ? `Zar At` : (rollsLeft > 0 ? `Tekrar At (${rollsLeft}/3)` : `Tablodan Puan Seçin`)) 
-              : "RAKİBİN HAMLESİ BEKLENİYOR..."}
+              ? (rollsLeft===3 ? t("Zar At") : (rollsLeft > 0 ? t("Tekrar At ({0}/3)", rollsLeft) : t("Tablodan Puan Seçin"))) 
+              : t("RAKİBİN HAMLESİ BEKLENİYOR...")}
           </motion.button>
         </div>
       </div>
@@ -3099,15 +3187,15 @@ function GameScreen({
               }}
             >
               <div style={{ fontSize: 56, marginBottom: 16 }}>🏆</div>
-              <h2 style={{ color: c.accent, fontSize: 26, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>HÜKMEN GALİP!</h2>
-              <p style={{ color: c.textSub, fontSize: 14, marginTop: 8, fontWeight: 500 }}>Rakip oyundan ayrıldı.</p>
+              <h2 style={{ color: c.accent, fontSize: 26, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>{t("HÜKMEN GALİP!")}</h2>
+              <p style={{ color: c.textSub, fontSize: 14, marginTop: 8, fontWeight: 500 }}>{t("Rakip oyundan ayrıldı.")}</p>
               
               <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 24 }}>
                 <div style={{ background: c.accentBg, padding: "10px 16px", borderRadius: 12, border:`1px solid ${c.accentRing}` }}>
-                  <span style={{ color: c.accent, fontWeight: 800, fontSize: 15 }}>+150 XP</span>
+                  <span style={{ color: c.accent, fontWeight: 800, fontSize: 15 }}>{t("+150 XP")}</span>
                 </div>
                 <div style={{ background: c.goldBg, padding: "10px 16px", borderRadius: 12, border:`1px solid rgba(201,168,76,0.3)` }}>
-                  <span style={{ color: c.gold, fontWeight: 800, fontSize: 15 }}>+50 Jeton</span>
+                  <span style={{ color: c.gold, fontWeight: 800, fontSize: 15 }}>{t("+50 Jeton")}</span>
                 </div>
               </div>
               
@@ -3120,7 +3208,7 @@ function GameScreen({
                   fontWeight: 800, fontSize: 15, cursor: "pointer", boxShadow: `0 8px 20px ${c.accentBg}` 
                 }}
               >
-                Ana Sayfaya Dön
+                {t("Ana Sayfaya Dön")}
               </motion.button>
             </motion.div>
           </motion.div>
@@ -3144,9 +3232,9 @@ function GameScreen({
               }}
             >
               <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
-              <h3 style={{ color: c.text, fontSize: 18, fontWeight: 800, margin: 0 }}>Oyundan Ayrıl?</h3>
+              <h3 style={{ color: c.text, fontSize: 18, fontWeight: 800, margin: 0 }}>{t("Oyundan Ayrıl?")}</h3>
               <p style={{ color: c.textSub, fontSize: 13, marginTop: 8, lineHeight: 1.4 }}>
-                Maçtan çıkarsan <span style={{ color: c.danger, fontWeight: 700 }}>hükmen mağlup</span> sayılacaksın. Emin misin?
+                {t("Maçtan çıkarsan")} <span style={{ color: c.danger, fontWeight: 700 }}>{t("hükmen mağlup")}</span> {t("sayılacaksın. Emin misin?")}
               </p>
               
               <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
@@ -3157,7 +3245,7 @@ function GameScreen({
                     color: c.text, border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 14, cursor: "pointer" 
                   }}
                 >
-                  Vazgeç
+                  {t("Vazgeç")}
                 </button>
                 <button 
                   onClick={confirmLeave}
@@ -3167,7 +3255,7 @@ function GameScreen({
                     boxShadow: "0 4px 12px rgba(192,57,43,0.3)"
                   }}
                 >
-                  Evet, Çık
+                  {t("Evet, Çık")}
                 </button>
               </div>
             </motion.div>
@@ -3194,7 +3282,7 @@ function GameScreen({
 
       {(reconnecting || opponentOffline) && (
         <div role="status" style={{ position:"absolute", top:58, left:12, right:12, zIndex:90, background:c.panel, border:`1px solid ${c.gold}`, color:c.gold, borderRadius:10, padding:"8px 12px", fontSize:12, fontWeight:700, textAlign:"center", backdropFilter:"blur(6px)" }}>
-          {reconnecting ? "Bağlantı koptu, maça geri dönülüyor..." : "Rakibin bağlantısı koptu, geri dönmesi bekleniyor..."}
+          {reconnecting ? t("Bağlantı koptu, maça geri dönülüyor...") : t("Rakibin bağlantısı koptu, geri dönmesi bekleniyor...")}
         </div>
       )}
 
@@ -3211,8 +3299,8 @@ function GameScreen({
               cursor: "pointer", boxShadow: `0 8px 24px ${c.shadow}`
             }}
           >
-            <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, margin: 0 }}>💬 {chatPreview.senderName}</p>
-            <p style={{ fontSize: 12, color: c.text, margin: "2px 0 0", wordBreak: "break-word" }}>{chatPreview.text}</p>
+            <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, margin: 0 }}>💬 {nameOf(chatPreview.senderName)}</p>
+            <p style={{ fontSize: 12, color: c.text, margin: "2px 0 0", wordBreak: "break-word" }}>{chatText(chatPreview.text)}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3241,8 +3329,8 @@ function GameScreen({
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${c.border}`, paddingBottom: 10 }}>
                 <div>
-                  <h3 style={{ fontSize: 15, fontWeight: 800, color: c.text, margin: 0 }}>💬 Maç Sohbeti</h3>
-                  <span style={{ fontSize: 10, color: c.textSub }}>Küfür ve spam koruması aktif</span>
+                  <h3 style={{ fontSize: 15, fontWeight: 800, color: c.text, margin: 0 }}>{t("💬 Maç Sohbeti")}</h3>
+                  <span style={{ fontSize: 10, color: c.textSub }}>{t("Küfür ve spam koruması aktif")}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button
@@ -3255,7 +3343,7 @@ function GameScreen({
                       padding: "5px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer"
                     }}
                   >
-                    {opponentMuted ? "🔇 Engellendi" : "🚫 Sustur"}
+                    {opponentMuted ? t("🔇 Engellendi") : t("🚫 Sustur")}
                   </button>
                   <button
                     type="button"
@@ -3266,7 +3354,7 @@ function GameScreen({
                       padding: "5px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer"
                     }}
                   >
-                    🚩 Raporla
+                    {t("🚩 Raporla")}
                   </button>
                   <button onClick={() => setChatOpen(false)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 8, padding: 6, color: c.textSub, cursor: "pointer", display: "flex" }}>
                     <X size={16} />
@@ -3276,7 +3364,7 @@ function GameScreen({
 
               {/* Hızlı Hazır Mesajlar */}
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-                {["Bol şans! 🍀", "İyi hamle! 👏", "Eyvah! 😅", "YAT geliyor! 🔥", "İyi oyundu! 🤝"].map(preset => (
+                {CHAT_PRESETS.map(preset => (
                   <button
                     key={preset}
                     type="button"
@@ -3289,7 +3377,7 @@ function GameScreen({
                       opacity: chatCooldown ? 0.5 : 1
                     }}
                   >
-                    {preset}
+                    {t(preset)}
                   </button>
                 ))}
               </div>
@@ -3298,7 +3386,7 @@ function GameScreen({
               <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, padding: "4px 2px" }}>
                 {chatMessages.length === 0 ? (
                   <div style={{ margin: "auto", textAlign: "center", color: c.textFaint, fontSize: 12 }}>
-                    Henüz mesaj yok. Rakibine selam ver! 👋
+                    {t("Henüz mesaj yok. Rakibine selam ver! 👋")}
                   </div>
                 ) : (
                   chatMessages.map((m, idx) => {
@@ -3306,7 +3394,7 @@ function GameScreen({
                     return (
                       <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: isMe ? "flex-end" : "flex-start" }}>
                         <span style={{ fontSize: 9, color: c.textSub, marginBottom: 2, fontWeight: 600 }}>
-                          {isMe ? "Sen" : m.senderName} • {m.time}
+                          {isMe ? t("Sen") : nameOf(m.senderName)} • {m.time}
                         </span>
                         <div style={{
                           background: isMe ? c.accent : c.panelAlt,
@@ -3316,7 +3404,7 @@ function GameScreen({
                           borderBottomLeftRadius: isMe ? 14 : 4,
                           fontSize: 13, fontWeight: 600, maxWidth: "82%", wordBreak: "break-word"
                         }}>
-                          {m.text}
+                          {chatText(m.text)}
                         </div>
                       </div>
                     );
@@ -3334,7 +3422,7 @@ function GameScreen({
                   maxLength={120}
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
-                  placeholder={chatCooldown ? "Spam koruması: Lütfen bekleyin..." : "Mesaj yaz (Maks 120 kr)..."}
+                  placeholder={chatCooldown ? t("Spam koruması: Lütfen bekleyin...") : t("Mesaj yaz (Maks 120 kr)...")}
                   style={{
                     flex: 1, background: c.bg, border: `1px solid ${c.border}`,
                     borderRadius: 12, padding: "11px 14px", color: c.text,
@@ -3352,7 +3440,7 @@ function GameScreen({
                     cursor: (chatCooldown || !chatInput.trim()) ? "not-allowed" : "pointer"
                   }}
                 >
-                  {chatCooldown ? "⏳" : "Gönder"}
+                  {chatCooldown ? "⏳" : t("Gönder")}
                 </button>
               </form>
             </motion.div>
@@ -3373,7 +3461,7 @@ function ResultScreen({
 
   const myTotal = summary ? summary.myTotal : 0;
   const oppTotal = summary ? summary.oppTotal : 0;
-  const oppName = summary ? summary.oppName : "Rakip";
+  const oppName = summary ? summary.oppName : t("Rakip");
   const oppSeed = summary ? summary.oppSeed : "RK";
   const rewardXp = summary ? summary.rewardXp : 150;
   const rewardTokens = summary ? summary.rewardTokens : 40;
@@ -3386,7 +3474,7 @@ function ResultScreen({
       m: summary?.myScores[cat.key] ?? 0,
       o: summary?.oppScores[cat.key] ?? 0
     })),
-    { l: "Üst Bonus", m: summary?.myBonus ?? 0, o: summary?.oppBonus ?? 0 },
+    { l: t("Üst Bonus"), m: summary?.myBonus ?? 0, o: summary?.oppBonus ?? 0 },
     ...CATS.slice(6).map(cat => ({
       l: cat.label,
       m: summary?.myScores[cat.key] ?? 0,
@@ -3402,14 +3490,14 @@ function ResultScreen({
           {isDraw ? <span style={{ fontSize: 28 }}>🤝</span> : won ? <Crown size={28} color={c.accent}/> : <Trophy size={28} color={c.danger}/>}
         </motion.div>
         <div style={{ textAlign:"center" }}>
-          <h1 style={{ fontSize:24, fontWeight:800, color:isDraw?c.gold:(won?c.accent:c.danger) }}>{isDraw ? "Berabere!" : (won ? "Galibiyet!" : "Mağlubiyet")}</h1>
-          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{isDraw ? "Baş başa mücadele! Giriş jetonları iade edildi." : (won ? "Harika oynandı!" : "Bir dahaki sefere!")}</p>
+          <h1 style={{ fontSize:24, fontWeight:800, color:isDraw?c.gold:(won?c.accent:c.danger) }}>{isDraw ? "Berabere!" : (won ? t("Galibiyet!") : t("Mağlubiyet"))}</h1>
+          <p style={{ fontSize:12, color:c.textSub, marginTop:2 }}>{isDraw ? t("Baş başa mücadele! Giriş jetonları iade edildi.") : (won ? t("Harika oynandı!") : t("Bir dahaki sefere!"))}</p>
         </div>
         <div style={{ display:"flex", gap:28, alignItems:"flex-end" }}>
           {[{name:profile.name,seed:profile.seed,score:myTotal,you:true},{name:oppName,seed:oppSeed,score:oppTotal,you:false}].map((p, idx)=>(
             <div key={idx} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5 }}>
               <Av seed={p.seed} size={40} active={p.you} dark={dark}/>
-              <p style={{ fontSize:11, color:c.textSub }}>{p.name}</p>
+              <p style={{ fontSize:11, color:c.textSub }}>{nameOf(p.name)}</p>
               <p style={{ fontSize:26, fontWeight:800, color:p.you?c.accent:c.text, lineHeight:1 }}>{p.score}</p>
             </div>
           ))}
@@ -3421,9 +3509,9 @@ function ResultScreen({
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:7 }}>
             <div style={{ display:"flex", alignItems:"center", gap:6 }}>
               <TrendingUp size={13} color={c.gold}/>
-              <span style={{ fontSize:13, fontWeight:600, color:c.text }}>+{rewardXp} XP & +{rewardTokens} 🪙 kazanıldı</span>
+              <span style={{ fontSize:13, fontWeight:600, color:c.text }}>+{rewardXp} {t("XP & +")}{rewardTokens} {t("🪙 kazanıldı")}</span>
             </div>
-            <span style={{ fontSize:11, color:c.textSub }}>Seviye {profile.level}</span>
+            <span style={{ fontSize:11, color:c.textSub }}>{t("Seviye")} {profile.level}</span>
           </div>
           <div style={{ height:5, background:c.panelAlt, borderRadius:99, overflow:"hidden" }}>
             <motion.div initial={{ width:"20%" }} animate={{ width:`${((profile.xp % 1000)/1000)*100}%` }} transition={{ duration:1.4, ease:"easeOut", delay:0.4 }}
@@ -3435,8 +3523,8 @@ function ResultScreen({
       <div style={{ padding:"14px 20px 0" }}>
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, overflow:"hidden" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 54px 54px", padding:"8px 14px", background:c.panelAlt, borderBottom:`1px solid ${c.border}` }}>
-            <span style={{ fontSize:9, color:c.textFaint, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase" }}>Kategori</span>
-            <span style={{ fontSize:9, color:c.accent, fontWeight:700, textAlign:"right", letterSpacing:"0.06em" }}>Sen</span>
+            <span style={{ fontSize:9, color:c.textFaint, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase" }}>{t("Kategori")}</span>
+            <span style={{ fontSize:9, color:c.accent, fontWeight:700, textAlign:"right", letterSpacing:"0.06em" }}>{t("Sen")}</span>
             <span style={{ fontSize:9, color:c.textSub, fontWeight:600, textAlign:"right", letterSpacing:"0.06em" }}>{oppName.substring(0,8)}</span>
           </div>
           <div style={{ maxHeight:220, overflowY:"auto" }}>
@@ -3444,7 +3532,7 @@ function ResultScreen({
               const iW=r.m>r.o, tW=r.o>r.m;
               return (
                 <div key={r.l} style={{ display:"grid", gridTemplateColumns:"1fr 54px 54px", padding:"8px 14px", borderBottom:i<rows.length-1?`1px solid ${c.border}`:"none", background:iW?c.accentBg:"transparent" }}>
-                  <span style={{ fontSize:12, color:c.textSub }}>{r.l}</span>
+                  <span style={{ fontSize:12, color:c.textSub }}>{t(r.l)}</span>
                   <span style={{ fontSize:13, fontWeight:iW?700:500, color:iW?c.accent:c.textSub, textAlign:"right" }}>{r.m}</span>
                   <span style={{ fontSize:13, fontWeight:tW?600:400, color:tW?c.text:c.textFaint, textAlign:"right" }}>{r.o}</span>
                 </div>
@@ -3452,7 +3540,7 @@ function ResultScreen({
             })}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 54px 54px", padding:"10px 14px", background:c.panelAlt, borderTop:`1.5px solid ${c.borderMid}` }}>
-            <span style={{ fontSize:13, fontWeight:800, color:c.text }}>TOPLAM</span>
+            <span style={{ fontSize:13, fontWeight:800, color:c.text }}>{t("TOPLAM")}</span>
             <span style={{ fontSize:15, fontWeight:800, color:c.accent, textAlign:"right" }}>{myTotal}</span>
             <span style={{ fontSize:15, fontWeight:700, color:c.textSub, textAlign:"right" }}>{oppTotal}</span>
           </div>
@@ -3464,11 +3552,11 @@ function ResultScreen({
           width:"100%", padding:"15px", background:c.accent, color:dark?c.bg:"#fff",
           fontSize:15, fontWeight:700, fontFamily:APP_FONT, borderRadius:14, border:"none",
           cursor:"pointer", letterSpacing:"0.04em", boxShadow:dark?`0 4px 16px rgba(74,173,166,0.32)`:`0 4px 16px rgba(61,139,133,0.26)`,
-        }}>Yeni Maç Ara</motion.button>
+        }}>{t("Yeni Maç Ara")}</motion.button>
         <motion.button whileTap={{ scale:0.97 }} onClick={()=>go("home")} style={{
           width:"100%", padding:"15px", background:"transparent", color:c.text,
           fontSize:15, fontWeight:500, fontFamily:APP_FONT, borderRadius:14, border:`1.5px solid ${c.borderMid}`, cursor:"pointer",
-        }}>Ana Sayfaya Dön</motion.button>
+        }}>{t("Ana Sayfaya Dön")}</motion.button>
       </div>
     </div>
   );
@@ -3486,19 +3574,19 @@ function ModeScreen({
 
   const modes: { key: string; label: string; sub: string; icon: string; available: boolean; action: "QUICK_MATCH" | "BOT_MATCH"; requiredBet?: BetOption }[] = [
     {
-      key: "bot", label: "Bota Karşı (Yapay Zeka)", sub: "Beklemeden anında YatBot ile oyna",
+      key: "bot", label: t("Bota Karşı (Yapay Zeka)"), sub: t("Beklemeden anında YatBot ile oyna"),
       icon: "🤖", available: true, action: "BOT_MATCH",
     },
     {
-      key: "classic", label: "Klasik Çevrimiçi Arena", sub: "Gerçek oyuncularla hızlı eşleşme",
+      key: "classic", label: t("Klasik Çevrimiçi Arena"), sub: t("Gerçek oyuncularla hızlı eşleşme"),
       icon: "🎲", available: true, action: "QUICK_MATCH",
     },
     {
-      key: "highroller", label: "Ustalar Arenası", sub: "Giriş 250 🪙 · Ödül 500 🪙",
+      key: "highroller", label: t("Ustalar Arenası"), sub: t("Giriş 250 🪙 · Ödül 500 🪙"),
       icon: "🔥", available: true, action: "QUICK_MATCH", requiredBet: 250,
     },
     {
-      key: "viproyal", label: "VIP Kraliyet Masası", sub: "Giriş 500 🪙 · Ödül 1.000 🪙",
+      key: "viproyal", label: t("VIP Kraliyet Masası"), sub: t("Giriş 500 🪙 · Ödül 1.000 🪙"),
       icon: "👑", available: true, action: "QUICK_MATCH", requiredBet: 500,
     },
   ];
@@ -3506,8 +3594,8 @@ function ModeScreen({
   return (
     <div style={{ minHeight:"100%", background:c.bg, fontFamily:APP_FONT, display:"flex", flexDirection:"column" }}>
       <div style={{ padding:"28px 20px 18px", borderBottom:`1px solid ${c.border}` }}>
-        <h2 style={{ fontSize:22, fontWeight:800, color:c.text, marginBottom:4 }}>Mod Seç</h2>
-        <p style={{ fontSize:12, color:c.textSub }}>Masa giriş jetonunu seç ve maça başla</p>
+        <h2 style={{ fontSize:22, fontWeight:800, color:c.text, marginBottom:4 }}>{t("Mod Seç")}</h2>
+        <p style={{ fontSize:12, color:c.textSub }}>{t("Masa giriş jetonunu seç ve maça başla")}</p>
       </div>
 
       {/* Üstte dekoratif dönen 3D zarlar - uygun boşluklarla hizalandı */}
@@ -3522,10 +3610,10 @@ function ModeScreen({
         <div style={{ background:c.panel, border:`1px solid ${c.border}`, borderRadius:14, padding:"11px 14px" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
             <span style={{ fontSize:10, fontWeight:800, color:c.textSub, textTransform:"uppercase", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>
-              Masa Giriş Jetonu
+              {t("Masa Giriş Jetonu")}
             </span>
             <span style={{ fontSize:11, fontWeight:800, color:c.gold, whiteSpace:"nowrap" }}>
-              {betAmount === 0 ? "Dostluk Maçı" : `Ödül: ${betAmount * 2} 🪙`}
+              {betAmount === 0 ? t("Dostluk Maçı") : t("Ödül: {0} 🪙", betAmount * 2)}
             </span>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:6 }}>
@@ -3547,7 +3635,7 @@ function ModeScreen({
                     opacity: canAfford ? 1 : 0.45,
                   }}
                 >
-                  {b === 0 ? "Ücretsiz" : `🪙 ${b}`}
+                  {b === 0 ? t("Ücretsiz") : `🪙 ${b}`}
                 </button>
               );
             })}
@@ -3567,7 +3655,7 @@ function ModeScreen({
               if (!m.available) return;
               if (m.requiredBet) {
                 if (tokens < m.requiredBet) {
-                  emitToast(`Bu masa için en az ${m.requiredBet} 🪙 jeton gerekli!`);
+                  emitToast(t("Bu masa için en az {0} 🪙 jeton gerekli!", m.requiredBet));
                   return;
                 }
                 setBetAmount(m.requiredBet);
@@ -3603,7 +3691,7 @@ function ModeScreen({
                 fontSize:12, fontWeight:700, color: dark ? c.bg : "#fff",
                 boxShadow: dark ? `0 3px 12px rgba(74,173,166,0.35)` : `0 3px 12px rgba(61,139,133,0.28)`,
               }}>
-                Oyna
+                {t("Oyna")}
               </div>
             )}
             {!m.available && (
@@ -3612,7 +3700,7 @@ function ModeScreen({
                 border:`1px solid ${c.border}`,
                 borderRadius:20, fontSize:11, fontWeight:500, color:c.textFaint,
               }}>
-                Yakında
+                {t("Yakında")}
               </div>
             )}
           </motion.div>
@@ -3622,6 +3710,131 @@ function ModeScreen({
   );
 }
 
+
+// ─── Screen 8: Settings (Tema, Dil, Ses, Hesap, Yasal) ────────────────────────
+type ThemeMode = "dark" | "light" | "system";
+
+function SettingsScreen({
+  dark, go, themeMode, onThemeChange, lang, onLangChange, onEditProfile, onLogout
+}: {
+  dark: boolean; go: (s: Screen) => void;
+  themeMode: ThemeMode; onThemeChange: (m: ThemeMode) => void;
+  lang: Lang; onLangChange: (l: Lang) => void;
+  onEditProfile: () => void; onLogout: () => void;
+}) {
+  const c = C(dark);
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem("yatzy_sound") !== "off");
+  const [hapticsOn, setHapticsOn] = useState(hapticsEnabled);
+  const [showLegal, setShowLegal] = useState(false);
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    try { localStorage.setItem("yatzy_sound", next ? "on" : "off"); } catch { /* yoksay */ }
+    if (next) sfx.lock();
+  };
+  const toggleHaptics = () => {
+    const next = !hapticsOn;
+    setHapticsOn(next);
+    setHapticsEnabled(next);
+    if (next) haptic();
+  };
+
+  const section = (title: string, children: React.ReactNode) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <p style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.textSub, fontWeight: 700, margin: "0 4px" }}>{title}</p>
+      <div style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: 16, overflow: "hidden" }}>{children}</div>
+    </div>
+  );
+
+  const row = (label: string, right: React.ReactNode, opts: { sub?: string; onClick?: () => void; danger?: boolean; last?: boolean } = {}) => {
+    const content = (
+      <>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: opts.danger ? c.danger : c.text, margin: 0 }}>{label}</p>
+          {opts.sub && <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0" }}>{opts.sub}</p>}
+        </div>
+        {right}
+      </>
+    );
+    const style: React.CSSProperties = {
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "13px 16px",
+      width: "100%", boxSizing: "border-box", background: "none",
+      borderTop: "none", borderLeft: "none", borderRight: "none", borderBottom: opts.last ? "none" : `1px solid ${c.border}`,
+      textAlign: "left", fontFamily: APP_FONT, cursor: opts.onClick ? "pointer" : "default"
+    };
+    return opts.onClick
+      ? <button type="button" onClick={opts.onClick} style={style}>{content}</button>
+      : <div style={style}>{content}</div>;
+  };
+
+  const toggleSwitch = (on: boolean, onToggle: () => void, label: string) => (
+    <button
+      type="button" role="switch" aria-checked={on} aria-label={label} onClick={onToggle}
+      style={{ width: 46, height: 28, borderRadius: 14, border: "none", padding: 3, cursor: "pointer", flexShrink: 0, background: on ? c.accent : c.panelAlt, transition: "background 0.2s", display: "flex", justifyContent: on ? "flex-end" : "flex-start" }}
+    >
+      <span style={{ width: 22, height: 22, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
+    </button>
+  );
+
+  const segmented = <T extends string>(value: T, options: { value: T; label: string }[], onChange: (v: T) => void, label: string) => (
+    <div role="radiogroup" aria-label={label} style={{ display: "flex", background: c.panelAlt, borderRadius: 10, padding: 3, gap: 2, flexShrink: 0 }}>
+      {options.map(o => (
+        <button
+          key={o.value} type="button" role="radio" aria-checked={value === o.value} onClick={() => onChange(o.value)}
+          style={{ border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: APP_FONT, background: value === o.value ? c.accent : "transparent", color: value === o.value ? (dark ? c.bg : "#fff") : c.textSub }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const chevron = <ChevronRight size={16} color={c.textSub} />;
+
+  return (
+    <div style={{ minHeight: "100%", background: c.bg, fontFamily: APP_FONT, padding: "24px 18px 32px", display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button type="button" onClick={() => go("home")} aria-label={t("Geri")} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 10, padding: 8, cursor: "pointer", display: "flex" }}>
+          <ChevronLeft size={18} color={c.text} />
+        </button>
+        <h2 style={{ fontSize: 22, fontWeight: 900, color: c.text, margin: 0 }}>{t("Ayarlar")}</h2>
+      </div>
+
+      {section(t("Görünüm"), <>
+        {row(t("Tema"), segmented(themeMode, [
+          { value: "dark", label: t("Koyu") },
+          { value: "light", label: t("Açık") },
+          { value: "system", label: t("Sistem") },
+        ], onThemeChange, t("Tema")))}
+        {row(t("Dil"), segmented(lang, [
+          { value: "tr", label: "Türkçe" },
+          { value: "en", label: "English" },
+        ], onLangChange, t("Dil")), { last: true })}
+      </>)}
+
+      {section(t("Ses ve Titreşim"), <>
+        {row(t("Ses Efektleri"), toggleSwitch(soundOn, toggleSound, t("Ses Efektleri")))}
+        {row(t("Titreşim"), toggleSwitch(hapticsOn, toggleHaptics, t("Titreşim")), { sub: t("Zar atma, kilitleme ve puan seçiminde"), last: true })}
+      </>)}
+
+      {section(t("Hesap"), <>
+        {row(t("Profili Düzenle"), chevron, { sub: t("Ad, fotoğraf ve ülke"), onClick: onEditProfile })}
+        {row(t("Çıkış Yap"), chevron, { onClick: onLogout, danger: true, last: true })}
+      </>)}
+
+      {section(t("Yasal ve Destek"), <>
+        {row(t("Gizlilik, EULA ve Kasa Olasılıkları"), chevron, { onClick: () => setShowLegal(true) })}
+        {row(t("Destek ve İletişim"), chevron, { onClick: () => openExternal(pageUrl("/support")) })}
+        {row(t("Gizlilik Politikası"), chevron, { onClick: () => openExternal(pageUrl("/privacy")) })}
+        {row(t("Kullanım Koşulları"), chevron, { onClick: () => openExternal(pageUrl("/terms")), last: true })}
+      </>)}
+
+      <p style={{ textAlign: "center", fontSize: 11, color: c.textSub, margin: 0 }}>Yat Dice · {t("Sürüm {0}", APP_VERSION)}</p>
+      <LegalModal open={showLegal} onClose={() => setShowLegal(false)} dark={dark} />
+    </div>
+  );
+}
 
 const TABS = [
   { id:"home",    Icon:Home,        label:"Anasayfa"   },
@@ -3661,7 +3874,7 @@ function QuestsScreen({
         });
         if (!res.ok) {
           const txt = await res.text();
-          emitToast(txt || "Görev ödülü alınamadı");
+          emitToast(txt || t("Görev ödülü alınamadı"));
           return;
         }
         sfx.win();
@@ -3765,14 +3978,14 @@ function QuestsScreen({
             </div>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 14, fontWeight: 800, color: c.text }}>{q.title}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: c.text }}>{t(q.title)}</span>
                 {isHard && (
                   <span style={{ fontSize: 9, fontWeight: 900, background: c.gold, color: "#1a1405", padding: "2px 6px", borderRadius: 6, textTransform: "uppercase" }}>
-                    ZOR • KASA ÖDÜLLÜ
+                    {t("ZOR • KASA ÖDÜLLÜ")}
                   </span>
                 )}
               </div>
-              <p style={{ fontSize: 11, color: c.textSub, margin: "3px 0 0", lineHeight: 1.35 }}>{q.desc}</p>
+              <p style={{ fontSize: 11, color: c.textSub, margin: "3px 0 0", lineHeight: 1.35 }}>{t(q.desc)}</p>
             </div>
           </div>
         </div>
@@ -3784,18 +3997,18 @@ function QuestsScreen({
               ✨ +{q.xp} XP
             </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: c.gold, background: c.goldBg, padding: "4px 8px", borderRadius: 8 }}>
-              🪙 +{q.tokens} Jeton
+              🪙 +{q.tokens} {t("Jeton")}
             </span>
             {q.cases > 0 && (
               <span style={{ fontSize: 11, fontWeight: 800, color: "#f39c12", background: "rgba(243,156,18,0.14)", padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(243,156,18,0.35)" }}>
-                📦 +{q.cases} Kasa
+                📦 +{q.cases} {t("Kasa")}
               </span>
             )}
           </div>
 
           {isClaimed ? (
             <span style={{ fontSize: 11, fontWeight: 800, color: c.accent, display: "flex", alignItems: "center", gap: 4 }}>
-              <Check size={14} /> Tamamlandı
+              <Check size={14} /> {t("Tamamlandı")}
             </span>
           ) : isCompleted ? (
             <motion.button
@@ -3810,7 +4023,7 @@ function QuestsScreen({
                 boxShadow: `0 4px 14px ${isHard ? c.goldBg : c.accentBg}`
               }}
             >
-              {claimingId === q.id ? "Alınıyor..." : (q.cases > 0 ? "🎁 Ödül & Kasa Al" : "🎁 Ödülü Al")}
+              {claimingId === q.id ? t("Alınıyor...") : (q.cases > 0 ? t("🎁 Ödül & Kasa Al") : t("🎁 Ödülü Al"))}
             </motion.button>
           ) : (
             <span style={{ fontSize: 11, fontWeight: 700, color: c.textSub, whiteSpace: "nowrap" }}>
@@ -3837,19 +4050,19 @@ function QuestsScreen({
     <div style={{ minHeight: "100%", background: c.bg, fontFamily: APP_FONT, display: "flex", flexDirection: "column", paddingBottom: 32 }}>
       <div style={{ padding: "28px 20px 18px", borderBottom: `1px solid ${c.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>Görev Modu</h2>
-          <p style={{ fontSize: 12, color: c.textSub }}>Görevleri tamamla; XP, Jeton ve Kasa kazan!</p>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>{t("Görev Modu")}</h2>
+          <p style={{ fontSize: 12, color: c.textSub }}>{t("Görevleri tamamla; XP, Jeton ve Kasa kazan!")}</p>
         </div>
         <div style={{ background: c.accentBg, border: `1px solid ${c.accentRing}`, borderRadius: 14, padding: "8px 12px", textAlign: "center" }}>
           <p style={{ fontSize: 14, fontWeight: 900, color: c.accent, margin: 0 }}>{claimedSet.size} / {QUEST_LIST.length}</p>
-          <p style={{ fontSize: 9, color: c.textSub, fontWeight: 700, margin: 0, textTransform: "uppercase" }}>Tamamlanan</p>
+          <p style={{ fontSize: 9, color: c.textSub, fontWeight: 700, margin: 0, textTransform: "uppercase" }}>{t("Tamamlanan")}</p>
         </div>
       </div>
 
       <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 18 }}>
         <div>
           <p style={{ fontSize: 10, fontWeight: 800, color: c.accent, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-            🎯 Normal Görevler
+            {t("🎯 Normal Görevler")}
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {QUEST_LIST.filter(q => q.difficulty === "normal").map(renderQuestCard)}
@@ -3858,7 +4071,7 @@ function QuestsScreen({
 
         <div>
           <p style={{ fontSize: 10, fontWeight: 800, color: c.gold, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-            🔥 Zor & Efsanevi Görevler
+            {t("🔥 Zor & Efsanevi Görevler")}
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {QUEST_LIST.filter(q => q.difficulty === "hard").map(renderQuestCard)}
@@ -3884,10 +4097,10 @@ function QuestsScreen({
             >
               <div style={{ fontSize: 68 }}>{questCasePopup.bonusGold ? "🪙" : "📦"}</div>
               <h3 style={{ fontSize: 20, fontWeight: 900, color: c.gold, margin: 0 }}>
-                {questCasePopup.bonusGold ? `Kasadan +${questCasePopup.bonusGold} 🪙 Çıktı!` : "Zor Görev Kasası Kazandın!"}
+                {questCasePopup.bonusGold ? t("Kasadan +{0} 🪙 Çıktı!", questCasePopup.bonusGold) : t("Zor Görev Kasası Kazandın!")}
               </h3>
               <p style={{ fontSize: 12, color: c.textSub, margin: 0, lineHeight: 1.45 }}>
-                <strong>{questCasePopup.title}</strong> görevinden <strong>+{questCasePopup.xp} XP</strong>, <strong>+{questCasePopup.tokens} 🪙</strong> ve <strong>{questCasePopup.cases} Kasa</strong> hesabına eklendi!
+                <strong>{t(questCasePopup.title)}</strong> {t("görevinden")} <strong>+{questCasePopup.xp} XP</strong>, <strong>+{questCasePopup.tokens} 🪙</strong> {t("ve")} <strong>{questCasePopup.cases} {t("Kasa")}</strong> {t("hesabına eklendi!")}
               </p>
 
               {!questCasePopup.bonusGold ? (
@@ -3896,13 +4109,13 @@ function QuestsScreen({
                     onClick={() => setQuestCasePopup(null)}
                     style={{ flex: 1, padding: "13px", borderRadius: 12, background: c.panelAlt, color: c.textSub, border: `1px solid ${c.border}`, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
                   >
-                    Sonra Aç
+                    {t("Sonra Aç")}
                   </button>
                   <button
                     onClick={openBonusCaseNow}
                     style={{ flex: 1.4, padding: "13px", borderRadius: 12, background: c.gold, color: "#1a1405", border: "none", fontWeight: 900, fontSize: 13, cursor: "pointer" }}
                   >
-                    📦 Kasayı Şimdi Aç!
+                    {t("📦 Kasayı Şimdi Aç!")}
                   </button>
                 </div>
               ) : (
@@ -3910,7 +4123,7 @@ function QuestsScreen({
                   onClick={() => setQuestCasePopup(null)}
                   style={{ width: "100%", padding: "14px", borderRadius: 14, background: c.accent, color: dark ? c.bg : "#fff", border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer", marginTop: 6 }}
                 >
-                  Harika, Devam Et
+                  {t("Harika, Devam Et")}
                 </button>
               )}
             </motion.div>
@@ -3923,9 +4136,10 @@ function QuestsScreen({
 
 // ─── Screen 6: Friends (Arkadaşlar & Oyun Davetleri) ─────────────────────────
 function FriendsScreen({
-  dark, token, friends, incoming, outgoing, onRefresh, onInviteToGame
+  dark, token, myHandle, friends, incoming, outgoing, onRefresh, onInviteToGame
 }: {
   dark: boolean;
+  myHandle: string;
   token: string | null;
   friends: FriendItem[];
   incoming: FriendItem[];
@@ -3938,6 +4152,14 @@ function FriendsScreen({
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [statusMsg, setStatusMsg] = useState<{ text: string; isErr: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyHandle = async () => {
+    try {
+      await navigator.clipboard.writeText(myHandle);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* pano kapalı olabilir; etiket ekranda görünüyor */ }
+  };
 
   useEffect(() => {
     if (!token) return;
@@ -3960,7 +4182,7 @@ function FriendsScreen({
       });
       if (res.ok) setBlockedUsers(prev => prev.filter(item => item.userId !== userId));
     } catch {
-      setStatusMsg({ text: "Engel kaldırılamadı.", isErr: true });
+      setStatusMsg({ text: t("Engel kaldırılamadı."), isErr: true });
     }
   };
 
@@ -3982,9 +4204,9 @@ function FriendsScreen({
       });
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(txt || "İstek gönderilemedi");
+        throw new Error(txt || t("İstek gönderilemedi"));
       }
-      setStatusMsg({ text: "Arkadaşlık isteği gönderildi!", isErr: false });
+      setStatusMsg({ text: t("Arkadaşlık isteği gönderildi!"), isErr: false });
       setSearchName("");
       onRefresh();
     } catch (err: any) {
@@ -4014,16 +4236,27 @@ function FriendsScreen({
   return (
     <div style={{ minHeight: "100%", background: c.bg, fontFamily: APP_FONT, display: "flex", flexDirection: "column", paddingBottom: 32 }}>
       <div style={{ padding: "28px 20px 18px", borderBottom: `1px solid ${c.border}` }}>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>Arkadaşlar</h2>
-        <p style={{ fontSize: 12, color: c.textSub }}>Arkadaş ekle ve tek tıkla maça davet et</p>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: c.text, marginBottom: 4 }}>{t("Arkadaşlar")}</h2>
+        <p style={{ fontSize: 12, color: c.textSub }}>{t("Arkadaş ekle ve tek tıkla maça davet et")}</p>
+        {tagOf(myHandle) && (
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: c.panel, border: `1px solid ${c.border}`, borderRadius: 14, padding: "10px 12px" }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 10, color: c.textSub, margin: 0, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>{t("Oyuncu Etiketin")}</p>
+              <p style={{ fontSize: 16, fontWeight: 800, color: c.text, margin: "2px 0 0" }}><Handle value={myHandle} tagColor={c.accent} /></p>
+            </div>
+            <button type="button" onClick={copyHandle} style={{ background: c.accentBg, border: `1px solid ${c.accent}`, color: c.accent, borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", flexShrink: 0 }}>
+              {copied ? t("Kopyalandı ✓") : t("Kopyala")}
+            </button>
+          </div>
+        )}
       </div>
 
       {isGuest ? (
         <div style={{ padding: 24, margin: 20, background: c.panel, borderRadius: 18, border: `1px solid ${c.border}`, textAlign: "center" }}>
           <p style={{ fontSize: 28, margin: "0 0 8px" }}>🔒</p>
-          <p style={{ fontSize: 14, fontWeight: 700, color: c.text }}>Misafir Hesabındasınız</p>
+          <p style={{ fontSize: 14, fontWeight: 700, color: c.text }}>{t("Misafir Hesabındasınız")}</p>
           <p style={{ fontSize: 12, color: c.textSub, marginTop: 6, lineHeight: 1.5 }}>
-            Arkadaş eklemek ve arkadaşlarınıza oyun daveti göndermek için lütfen kayıtlı bir hesapla giriş yapın.
+            {t("Arkadaş eklemek ve arkadaşlarınıza oyun daveti göndermek için lütfen kayıtlı bir hesapla giriş yapın.")}
           </p>
         </div>
       ) : (
@@ -4031,12 +4264,12 @@ function FriendsScreen({
           {/* Arkadaş Ekleme Formu */}
           <form onSubmit={sendRequest} style={{ background: c.panel, padding: 16, borderRadius: 16, border: `1px solid ${c.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: c.textSub, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
-              Kullanıcı Adı ile Arkadaş Ekle
+              {t("Oyuncu Etiketiyle Arkadaş Ekle")}
             </p>
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type="text"
-                placeholder="Örn: Utku"
+                placeholder={t("Örn: Utku#1234")}
                 value={searchName}
                 onChange={e => setSearchName(e.target.value)}
                 style={{ flex: 1, background: c.bg, border: `1px solid ${c.border}`, padding: "11px 14px", borderRadius: 12, color: c.text, fontSize: 13, fontWeight: 600, outline: "none" }}
@@ -4047,7 +4280,7 @@ function FriendsScreen({
                 disabled={loading || !searchName.trim()}
                 style={{ padding: "0 18px", background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13, cursor: "pointer" }}
               >
-                Ekle
+                {t("Ekle")}
               </motion.button>
             </div>
             {statusMsg && (
@@ -4061,7 +4294,7 @@ function FriendsScreen({
           {incoming.length > 0 && (
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, color: c.gold, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-                Gelen İstekler ({incoming.length})
+                {t("Gelen İstekler (")}{incoming.length})
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {incoming.map(req => (
@@ -4069,16 +4302,16 @@ function FriendsScreen({
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <Av seed={req.username.substring(0, 2).toUpperCase()} size={36} dark={dark} avatar={req.avatar} country={req.country} />
                       <div>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}>{req.username}</p>
-                        <p style={{ fontSize: 11, color: c.textSub, margin: 0 }}>Seviye {computeLevel(req.xp)} • {req.wins} Galibiyet</p>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}><Handle value={req.username} tagColor={c.textSub} /></p>
+                        <p style={{ fontSize: 11, color: c.textSub, margin: 0 }}>{t("Seviye")} {computeLevel(req.xp)} • {req.wins} {t("Galibiyet")}</p>
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => respondRequest(req.friendshipId, "accept")} style={{ background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 10, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                        Kabul Et
+                        {t("Kabul Et")}
                       </button>
                       <button onClick={() => respondRequest(req.friendshipId, "reject")} style={{ background: c.panelAlt, color: c.textSub, border: `1px solid ${c.border}`, borderRadius: 10, padding: "7px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                        Reddet
+                        {t("Reddet")}
                       </button>
                     </div>
                   </div>
@@ -4090,14 +4323,14 @@ function FriendsScreen({
           {blockedUsers.length > 0 && (
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-                Engellenenler ({blockedUsers.length})
+                {t("Engellenenler (")}{blockedUsers.length})
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {blockedUsers.map(item => (
                   <div key={item.userId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: c.panel, border: `1px solid ${c.border}`, borderRadius: 12, padding: "9px 12px" }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>{item.username}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}><Handle value={item.username} tagColor={c.textSub} /></span>
                     <button onClick={() => unblockUser(item.userId)} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, color: c.textSub, borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                      Engeli Kaldır
+                      {t("Engeli Kaldır")}
                     </button>
                   </div>
                 ))}
@@ -4108,11 +4341,11 @@ function FriendsScreen({
           {/* Arkadaş Listesi */}
           <div>
             <p style={{ fontSize: 10, fontWeight: 700, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-              Arkadaşlarım ({friends.length})
+              {t("Arkadaşlarım (")}{friends.length})
             </p>
             {friends.length === 0 ? (
               <div style={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: 14, padding: 20, textAlign: "center" }}>
-                <p style={{ fontSize: 12, color: c.textSub, margin: 0 }}>Henüz arkadaşın yok. Yukarıdan kullanıcı adıyla arkadaş ekleyebilirsin!</p>
+                <p style={{ fontSize: 12, color: c.textSub, margin: 0 }}>{t("Henüz arkadaşın yok. Yukarıdan kullanıcı adıyla arkadaş ekleyebilirsin!")}</p>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -4129,12 +4362,12 @@ function FriendsScreen({
                       </div>
                       <div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}>{f.username}</p>
+                          <p style={{ fontSize: 14, fontWeight: 700, color: c.text, margin: 0 }}><Handle value={f.username} tagColor={c.textSub} /></p>
                           <span style={{ fontSize: 10, fontWeight: 700, color: f.inGame ? "#f39c12" : (f.isOnline ? "#2ecc71" : c.textFaint) }}>
-                            {f.inGame ? "🎮 Oyunda" : (f.isOnline ? "🟢 Çevrimiçi" : "⚪ Çevrimdışı")}
+                            {f.inGame ? t("🎮 Oyunda") : (f.isOnline ? t("🟢 Çevrimiçi") : t("⚪ Çevrimdışı"))}
                           </span>
                         </div>
-                        <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0" }}>Seviye {computeLevel(f.xp)} • 🏆 {f.wins} Galibiyet</p>
+                        <p style={{ fontSize: 11, color: c.textSub, margin: "2px 0 0" }}>{t("Seviye")} {computeLevel(f.xp)} • 🏆 {f.wins} {t("Galibiyet")}</p>
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -4143,11 +4376,11 @@ function FriendsScreen({
                         onClick={() => onInviteToGame(f.userId)}
                         style={{ background: c.accent, color: dark ? c.bg : "#fff", border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                       >
-                        🎲 Davet Et
+                        {t("🎲 Davet Et")}
                       </motion.button>
                       <button
                         onClick={() => respondRequest(f.friendshipId, "remove")}
-                        title="Arkadaşlıktan Çıkar"
+                        title={t("Arkadaşlıktan Çıkar")}
                         style={{ background: "transparent", border: "none", color: c.textFaint, cursor: "pointer", padding: 4 }}
                       >
                         <X size={16} />
@@ -4163,14 +4396,14 @@ function FriendsScreen({
           {outgoing.length > 0 && (
             <div>
               <p style={{ fontSize: 10, fontWeight: 700, color: c.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-                Gönderilen İstekler ({outgoing.length})
+                {t("Gönderilen İstekler (")}{outgoing.length})
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {outgoing.map(req => (
                   <div key={req.friendshipId} style={{ background: c.panelAlt, border: `1px solid ${c.border}`, borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: c.textSub }}>{req.username} (Onay Bekleniyor)</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: c.textSub }}><Handle value={req.username} tagColor={c.textSub} /> {t("(Onay Bekleniyor)")}</span>
                     <button onClick={() => respondRequest(req.friendshipId, "remove")} style={{ background: "none", border: "none", color: c.danger, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                      İptal
+                      {t("İptal")}
                     </button>
                   </div>
                 ))}
@@ -4192,13 +4425,43 @@ export default function App() {
   const [resumeState, setResumeState] = useState<ResumeState | null>(null);
   const [profileRefresh, setProfileRefresh] = useState(0);
   const contentRef = useRef<HTMLDivElement>(null);
-  const savedUsername = localStorage.getItem("yatzy_username") || "Oyuncu 1";
+  const savedUsername = localStorage.getItem("yatzy_username") || t("Oyuncu 1");
   const [screen, setScreen] = useState<Screen>(localStorage.getItem("yatzy_jwt_token") ? "home" : "auth");
   const hasBottomNav = screen !== "auth" && screen !== "result" && screen !== "game";
   const screenRef = useRef(screen);
   useEffect(() => { screenRef.current = screen; }, [screen]);
 
-  const [dark, setDark] = useState(true);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    try {
+      const saved = localStorage.getItem("yatzy_theme");
+      if (saved === "dark" || saved === "light" || saved === "system") return saved;
+    } catch { /* yoksay */ }
+    return "dark";
+  });
+  const [systemDark, setSystemDark] = useState(() => typeof window === "undefined" || !window.matchMedia || window.matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  const dark = themeMode === "system" ? systemDark : themeMode === "dark";
+  useEffect(() => {
+    document.body.style.background = C(dark).bg;
+    applyStatusBarTheme(dark, C(dark).bg);
+  }, [dark]);
+  const changeTheme = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    try { localStorage.setItem("yatzy_theme", mode); } catch { /* yoksay */ }
+  };
+  const [lang, setLangState] = useState<Lang>(getLang);
+  const changeLang = (next: Lang) => {
+    setLang(next);
+    setLangState(next);
+  };
+  const [startEditing, setStartEditing] = useState(false);
+  const clearStartEditing = useCallback(() => setStartEditing(false), []);
   const [dieMat, setDieMat] = useState<DieMat>("ivory");
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
@@ -4220,7 +4483,7 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [myPlayerIndex, setMyPlayerIndex] = useState<number>(1);
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null);
-  const [opponentName, setOpponentName] = useState<string>("Rakip");
+  const [opponentName, setOpponentName] = useState<string>(t("Rakip"));
   const [betAmount, setBetAmount] = useState<BetOption>(50);
   const [activeBet, setActiveBet] = useState<number>(0);
 
@@ -4366,16 +4629,16 @@ export default function App() {
     })
     .then(res => {
       if (res.status === 401 || res.status === 404) {
-        emitToast("Oturumunun süresi doldu. Lütfen tekrar giriş yap.");
+        emitToast(t("Oturumunun süresi doldu. Lütfen tekrar giriş yap."));
         clearSession();
         return null;
       }
-      if (!res.ok) throw new Error("Profil çekilemedi");
+      if (!res.ok) throw new Error(t("Profil çekilemedi"));
       return res.json();
     })
     .then(data => {
       if (!data) return;
-      const uname = data.username || localStorage.getItem("yatzy_username") || "Oyuncu";
+      const uname = data.username || localStorage.getItem("yatzy_username") || t("Oyuncu");
       localStorage.setItem("yatzy_username", uname);
       setProfile({
         name: uname,
@@ -4418,20 +4681,20 @@ export default function App() {
         headers: { "Authorization": "Bearer " + token }
       });
       if (res.status === 401 || res.status === 404) {
-        emitToast("Oturumunun süresi doldu. Lütfen tekrar giriş yap.");
+        emitToast(t("Oturumunun süresi doldu. Lütfen tekrar giriş yap."));
         handleLogout();
         return;
       }
     } catch {
       // Aşağıdaki genel bağlantı uyarısı gösterilir
     }
-    emitToast("Sunucuya bağlanılamadı. Lütfen tekrar dene.");
+    emitToast(t("Sunucuya bağlanılamadı. Lütfen tekrar dene."));
   };
 
   const handleMatchResumed = useCallback((data: ResumedMatch) => {
     resumeInFlightRef.current = false;
     setMyPlayerIndex(data.playerIndex);
-    setOpponentName(data.opponentName || "Rakip");
+    setOpponentName(data.opponentName || t("Rakip"));
     setActiveBet(data.betAmount || 0);
     setResumeState(data.state);
     setReconnecting(false);
@@ -4445,7 +4708,7 @@ export default function App() {
     setReconnecting(false);
     setResumeState(null);
     if (screenRef.current === "game") {
-      emitToast("Maça geri dönülemedi, maç sona erdi.");
+      emitToast(t("Maça geri dönülemedi, maç sona erdi."));
       setScreen("home");
     }
     setProfileRefresh(value => value + 1);
@@ -4454,7 +4717,7 @@ export default function App() {
   const handleSessionReplaced = useCallback(() => {
     closeSocket(ws);
     setReconnecting(false);
-    emitToast("Bu maç başka bir cihazda açıldı.");
+    emitToast(t("Bu maç başka bir cihazda açıldı."));
     setScreen("home");
   }, [closeSocket, ws]);
 
@@ -4470,7 +4733,7 @@ export default function App() {
     resumeInFlightRef.current = true;
     setReconnecting(screenRef.current === "game");
 
-    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(savedToken)}`);
+    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(savedToken)}&lang=${getLang()}`);
     let opened = false;
     socket.onopen = () => {
       opened = true;
@@ -4517,7 +4780,7 @@ export default function App() {
     closeSocket(ws);
     setIsSearching(true);
     
-    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(token)}`);
+    const socket = new WebSocket(`${WS_BASE}/play?token=${encodeURIComponent(token)}&lang=${getLang()}`);
     let opened = false;
     
     socket.onopen = () => {
@@ -4550,13 +4813,13 @@ export default function App() {
           }));
         }
         setMyPlayerIndex(data.playerIndex);
-        setOpponentName(data.opponentName || "Rakip");
+        setOpponentName(data.opponentName || t("Rakip"));
         setIsSearching(false);
         setCreatedRoomCode(null);
         setScreen("game");
       }
       else if (data.type === "ERROR") {
-        emitToast(data.message || "Bağlantı hatası");
+        emitToast(data.message || t("Bağlantı hatası"));
         setIsSearching(false);
         setCreatedRoomCode(null);
         socket.close();
@@ -4644,9 +4907,9 @@ export default function App() {
                 <Av seed={onlineToast.username} size={32} dark={dark} avatar={onlineToast.avatar} country={onlineToast.country} active={true} />
                 <div>
                   <p style={{ fontSize: 12, fontWeight: 800, color: c.text, margin: 0 }}>
-                    🟢 {onlineToast.username} çevrimiçi oldu!
+                    🟢 {nameOf(onlineToast.username)} {t("çevrimiçi oldu!")}
                   </p>
-                  <p style={{ fontSize: 10, color: c.textSub, margin: 0 }}>Hemen maça davet edebilirsin</p>
+                  <p style={{ fontSize: 10, color: c.textSub, margin: 0 }}>{t("Hemen maça davet edebilirsin")}</p>
                 </div>
               </div>
               <button
@@ -4666,7 +4929,7 @@ export default function App() {
                   fontSize: 11, fontWeight: 800, cursor: "pointer"
                 }}
               >
-                🎲 Davet Et
+                {t("🎲 Davet Et")}
               </button>
             </motion.div>
           )}
@@ -4693,10 +4956,10 @@ export default function App() {
             >
               <div>
                 <p style={{ fontSize: 12, fontWeight: 800, color: c.text, margin: 0 }}>
-                  🎲 {gameInvites[0].fromName} seni maça davet ediyor!
+                  🎲 {nameOf(gameInvites[0].fromName)} {t("seni maça davet ediyor!")}
                 </p>
                 <p style={{ fontSize: 11, color: c.accent, fontWeight: 600, margin: "2px 0 0" }}>
-                  Oda Kodu: {gameInvites[0].roomCode}
+                  {t("Oda Kodu:")} {gameInvites[0].roomCode}
                 </p>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
@@ -4712,7 +4975,7 @@ export default function App() {
                     fontSize: 12, fontWeight: 800, cursor: "pointer"
                   }}
                 >
-                  Katıl
+                  {t("Katıl")}
                 </button>
                 <button
                   onClick={() => dismissGameInvite(gameInvites[0].id)}
@@ -4722,7 +4985,7 @@ export default function App() {
                     fontSize: 12, fontWeight: 600, cursor: "pointer"
                   }}
                 >
-                  Reddet
+                  {t("Reddet")}
                 </button>
               </div>
             </motion.div>
@@ -4733,16 +4996,25 @@ export default function App() {
         <div ref={contentRef} style={{ flex:1, overflowY:"auto", position:"relative", paddingBottom: hasBottomNav ? 0 : "env(safe-area-inset-bottom)" }}>
           <AnimatePresence mode="wait" onExitComplete={() => contentRef.current?.scrollTo(0, 0)}>
             <motion.div key={screen} initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-8 }} transition={{ duration:0.16 }} style={{ height:"100%" }}>
-              {screen==="auth" && <AuthScreen onLogin={handleAuthSuccess} dark={dark} />}
+              {screen==="auth" && <AuthScreen onLogin={handleAuthSuccess} dark={dark} lang={lang} onLangChange={changeLang} />}
               {screen==="home" && (
                 <HomeScreen
-                  go={setScreen} dark={dark} toggle={()=>setDark(d=>!d)}
+                  go={setScreen} dark={dark} startEditing={startEditing} onEditingStarted={clearStartEditing}
                   profile={profile} setProfile={setProfile}
                   isSearching={isSearching} connectToServer={connectToServer}
                   createdRoomCode={createdRoomCode} cancelMatchmaking={cancelMatchmaking}
                   onLogout={handleLogout} token={token} profileLoaded={profileLoaded}
                   friends={friends} onSendInvite={sendGameInvite}
                   betAmount={betAmount} setBetAmount={setBetAmount}
+                />
+              )}
+              {screen==="settings" && (
+                <SettingsScreen
+                  dark={dark} go={setScreen}
+                  themeMode={themeMode} onThemeChange={changeTheme}
+                  lang={lang} onLangChange={changeLang}
+                  onEditProfile={() => { setStartEditing(true); setScreen("home"); }}
+                  onLogout={handleLogout}
                 />
               )}
               {screen==="modes" && (
@@ -4767,7 +5039,7 @@ export default function App() {
               )}
               {screen==="friends" && (
                 <FriendsScreen
-                  dark={dark} token={token}
+                  dark={dark} token={token} myHandle={profile.name}
                   friends={friends} incoming={incomingRequests} outgoing={outgoingRequests}
                   onRefresh={fetchFriends}
                   onInviteToGame={(friendUserId) => {
@@ -4850,7 +5122,7 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <span style={{ fontSize:9, fontWeight:active?700:500, color:active?c.accent:c.textSub, letterSpacing:"0.04em", textTransform:"uppercase" }}>{label}</span>
+                  <span style={{ fontSize:9, fontWeight:active?700:500, color:active?c.accent:c.textSub, letterSpacing:"0.04em", textTransform:"uppercase" }}>{t(label)}</span>
                 </button>
               );
             })}

@@ -2,7 +2,9 @@ import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import { Capacitor } from "@capacitor/core";
 import { Haptics, ImpactStyle } from "@capacitor/haptics";
+import { StatusBar, Style } from "@capacitor/status-bar";
 import { SocialLogin } from "@capgo/capacitor-social-login";
+import { t } from "./i18n";
 
 export const IS_NATIVE = Capacitor.isNativePlatform();
 export const PLATFORM = Capacitor.getPlatform();
@@ -29,7 +31,7 @@ export async function nativeGoogleLogin(): Promise<string> {
   await initSocialLogin();
   const { result } = await SocialLogin.login({ provider: "google", options: { scopes: ["email", "profile"] } });
   const idToken = "idToken" in result ? result.idToken : null;
-  if (!idToken) throw new Error("Google girişi tamamlanamadı");
+  if (!idToken) throw new Error(t("Google girişi tamamlanamadı"));
   return idToken;
 }
 
@@ -38,7 +40,7 @@ export async function nativeAppleLogin(): Promise<{ credential: string; authoriz
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const nonce = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
   const { result } = await SocialLogin.login({ provider: "apple", options: { scopes: ["email"], nonce } });
-  if (!result.idToken) throw new Error("Apple girişi tamamlanamadı");
+  if (!result.idToken) throw new Error(t("Apple girişi tamamlanamadı"));
   return { credential: result.idToken, authorizationCode: result.authorizationCode, nonce };
 }
 
@@ -50,9 +52,24 @@ export function openExternal(url: string): void {
   }
 }
 
+export function hapticsEnabled(): boolean {
+  try { return localStorage.getItem("yatzy_haptics") !== "off"; } catch { return true; }
+}
+
+export function setHapticsEnabled(on: boolean): void {
+  try { localStorage.setItem("yatzy_haptics", on ? "on" : "off"); } catch { /* yoksay */ }
+}
+
 export function haptic(style: "light" | "medium" = "light"): void {
-  if (!IS_NATIVE) return;
+  if (!IS_NATIVE || !hapticsEnabled()) return;
   void Haptics.impact({ style: style === "medium" ? ImpactStyle.Medium : ImpactStyle.Light }).catch(() => {});
+}
+
+/** Telefonun durum çubuğunu açık veya koyu temaya uydurur. */
+export function applyStatusBarTheme(dark: boolean, background: string): void {
+  if (!IS_NATIVE) return;
+  void StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light }).catch(() => {});
+  if (PLATFORM === "android") void StatusBar.setBackgroundColor({ color: background }).catch(() => {});
 }
 
 export function minimizeApp(): void {

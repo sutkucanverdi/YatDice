@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -101,7 +102,8 @@ var upgrader = websocket.Upgrader{
 
 type Client struct {
 	ID          string
-	UserID      int // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
+	UserID      int    // Veritabanındaki kullanıcı ID'si (Misafir ise 0)
+	Lang        string // Mesajların gönderileceği dil (tr veya en)
 	Conn        *websocket.Conn
 	WriteMu     sync.Mutex // Concurrent websocket write panic önleyici
 	Room        *Room
@@ -116,12 +118,14 @@ type Client struct {
 // Kelimenin başında aranır; ekli halleri de yakalanır ("salaksın", "siktir")
 var profanityPrefixes = []string{
 	"aptal", "salak", "gerizekal", "orospu", "piç", "yavşak", "ibne", "sik", "amına", "amcık",
-	"fuck", "shit", "bitch", "asshole", "cunt",
+	"fuck", "shit", "bitch", "asshole", "cunt", "motherf", "bastard", "whore", "slut", "nigg", "faggot",
+	"retard", "dickhead", "pussy", "wanker", "bollock", "porn",
 }
 
 // Yalnızca kelimenin tamamı eşleşirse sayılır; "götürmek" veya "klasik" gibi masum kelimeler etkilenmez
 var profanityWords = map[string]bool{
 	"amk": true, "aq": true, "göt": true, "götü": true, "götün": true, "götüne": true, "götünü": true, "götüm": true, "dick": true,
+	"ass": true, "cock": true, "fag": true, "fags": true, "twat": true, "piss": true, "prick": true, "rape": true, "kys": true, "stfu": true, "wtf": true,
 }
 
 // Kullanıcı adlarında bitişik yazımı da yakalamak için her yerde aranır
@@ -465,7 +469,7 @@ func startRoomCleanupWorker() {
 					if entry.Host != nil {
 						_ = entry.Host.WriteJSON(map[string]interface{}{
 							"type":    "ERROR",
-							"message": "Özel oda bekleme süresi dolduğu için kapatıldı.",
+							"message": localize(entry.Host.Lang, "Özel oda bekleme süresi dolduğu için kapatıldı."),
 						})
 					}
 				}
@@ -1228,13 +1232,13 @@ func (b *wsMessageBudget) allow(now time.Time) bool {
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	if !generalLimiter.Allow(getClientIP(r)) {
-		http.Error(w, "Çok fazla istek gönderdiniz. Lütfen kısa bir süre bekleyin.", http.StatusTooManyRequests)
+		httpError(w, r, "Çok fazla istek gönderdiniz. Lütfen kısa bir süre bekleyin.", http.StatusTooManyRequests)
 		return
 	}
 
 	userID, username, err := authenticateWebSocket(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -1244,7 +1248,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{Conn: ws, UserID: userID, Username: username}
+	client := &Client{Conn: ws, UserID: userID, Username: username, Lang: requestLang(r)}
 	registerLiveClient(client)
 
 	// Ping/Pong ve ReadDeadline ayarları (Hayalet bağlantıları tespit eder)
@@ -1340,7 +1344,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 			if action == "BOT_MATCH" {
 				if !deductBetDB(client.UserID, requestedBet) {
-					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Seçilen masa için yeterli jetonunuz yok!"})
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": localize(client.Lang, "Seçilen masa için yeterli jetonunuz yok!")})
 					mu.Unlock()
 					continue
 				}
@@ -1370,7 +1374,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				removeFromQueue(client)
 				// Aynı hesabın ikinci bağlantıdan kuyruğa girmesini önle
 				if isUserQueued(client.UserID) {
-					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Bu hesap zaten eşleşme kuyruğunda!"})
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": localize(client.Lang, "Bu hesap zaten eşleşme kuyruğunda!")})
 					mu.Unlock()
 					continue
 				}
@@ -1431,7 +1435,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				// Güvenli tip dönüşümü (Panic önleyici)
 				codeRaw, ok := msg["roomCode"].(string)
 				if !ok {
-					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Geçersiz oda kodu formatı!"})
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": localize(client.Lang, "Geçersiz oda kodu formatı!")})
 					mu.Unlock()
 					continue
 				}
@@ -1470,7 +1474,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"betAmount":    matchBet,
 					})
 				} else {
-					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": "Oda bulunamadı veya kendi odanıza katılamazsınız!"})
+					_ = client.WriteJSON(map[string]interface{}{"type": "ERROR", "message": localize(client.Lang, "Oda bulunamadı veya kendi odanıza katılamazsınız!")})
 				}
 			}
 			mu.Unlock()
@@ -1514,7 +1518,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			if time.Since(client.LastEmojiAt) < 2000*time.Millisecond {
 				_ = client.WriteJSON(map[string]interface{}{
 					"type":    "SPAM_WARN",
-					"message": "Emoji spam koruması: Lütfen 2 saniye bekleyin.",
+					"message": localize(client.Lang, "Emoji spam koruması: Lütfen 2 saniye bekleyin."),
 				})
 				room.Mu.Unlock()
 				continue
@@ -1534,7 +1538,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			if time.Since(client.LastChatAt) < 2500*time.Millisecond {
 				_ = client.WriteJSON(map[string]interface{}{
 					"type":    "SPAM_WARN",
-					"message": "Çok hızlı yazıyorsunuz! Lütfen 2.5 saniye bekleyin.",
+					"message": localize(client.Lang, "Çok hızlı yazıyorsunuz! Lütfen 2.5 saniye bekleyin."),
 				})
 				room.Mu.Unlock()
 				continue
@@ -1577,7 +1581,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 						"type":       "CHAT",
 						"sender":     "p2",
 						"senderName": "🤖 YatBot",
-						"text":       botReply,
+						"text":       localize(client.Lang, botReply),
 						"time":       time.Now().Format("15:04"),
 					})
 				}(room, cleanText)
@@ -1751,6 +1755,8 @@ func createTables() {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT DEFAULT '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_apple_id_unique ON users (apple_id) WHERE apple_id <> '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_unique ON users (LOWER(username));`,
+		// Eski kullanıcı adlarına #etiket eklenir (Ad#1234); aynı ad artık farklı etiketlerle kullanılabilir
+		`UPDATE users SET username = username || '#' || (floor(random() * 9000) + 1000)::int WHERE username NOT LIKE '%#%';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_unique ON users (google_id) WHERE google_id <> '';`,
 	}
 	for _, m := range migrations {
@@ -1775,7 +1781,7 @@ func setupCORS(w *http.ResponseWriter, r *http.Request) bool {
 		(*w).Header().Set("Access-Control-Allow-Origin", strings.Split(allowedOrigin, ",")[0])
 	}
 	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
-	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept-Language")
 	if r.Method == "OPTIONS" {
 		(*w).WriteHeader(http.StatusOK)
 		return true
@@ -1795,56 +1801,82 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	var creds Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	creds.Username = strings.TrimSpace(creds.Username)
 	creds.Email = strings.ToLower(strings.TrimSpace(creds.Email))
-	if len(creds.Username) < 2 || len(creds.Username) > 30 || len(creds.Password) < 6 {
-		http.Error(w, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
+	if !validDisplayName(creds.Username) || len(creds.Password) < 6 {
+		httpError(w, r, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
 		return
 	}
 	if isForbiddenUsername(creds.Username) {
-		http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
+		httpError(w, r, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
 		return
 	}
 	if len(creds.Password) > 72 {
-		http.Error(w, "Şifre en fazla 72 karakter olabilir", http.StatusBadRequest)
+		httpError(w, r, "Şifre en fazla 72 karakter olabilir", http.StatusBadRequest)
 		return
 	}
 	if creds.Email != "" && !validEmailAddress(creds.Email) {
-		http.Error(w, "Geçerli bir e-posta adresi girin", http.StatusBadRequest)
+		httpError(w, r, "Geçerli bir e-posta adresi girin", http.StatusBadRequest)
 		return
 	}
 	if !creds.AcceptedTerms {
-		http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+		httpError(w, r, termsRequiredMessage, http.StatusBadRequest)
 		return
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(creds.Password), BcryptCost)
 	if err != nil {
-		http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+		httpError(w, r, "Sunucu hatası", http.StatusInternalServerError)
 		return
 	}
 
-	var userID int
-	err = db.QueryRow("INSERT INTO users (username, password_hash, email, is_guest, terms_accepted_at) VALUES ($1, $2, $3, FALSE, NOW()) RETURNING id",
-		creds.Username, string(hashedPassword), creds.Email).Scan(&userID)
+	userID, handle, err := insertWithHandle(creds.Username, func(candidate string) (int, error) {
+		var id int
+		err := db.QueryRow("INSERT INTO users (username, password_hash, email, is_guest, terms_accepted_at) VALUES ($1, $2, $3, FALSE, NOW()) RETURNING id",
+			candidate, string(hashedPassword), creds.Email).Scan(&id)
+		return id, err
+	})
 	if err != nil {
-		http.Error(w, "Bu kullanıcı adı zaten alınmış", http.StatusConflict)
+		httpError(w, r, "Bu kullanıcı adı zaten alınmış", http.StatusConflict)
 		return
 	}
 
 	_, err = db.Exec("INSERT INTO profiles (user_id, xp, tokens, cases, unlocked_dice, selected_dice) VALUES ($1, 120, 210, 2, 'ivory', 'ivory')", userID)
 	if err != nil {
-		http.Error(w, "Profil oluşturulamadı", http.StatusInternalServerError)
+		httpError(w, r, "Profil oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Kayıt başarılı!"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": L(r, "Kayıt başarılı!"), "username": handle})
+}
+
+// userIDWithResetCode adı (etiketli veya etiketsiz) eşleşen hesaplardan sıfırlama kodu bekleyeni bulur.
+func userIDWithResetCode(name string) (int, error) {
+	rows, err := db.Query(`
+		SELECT id FROM users
+		WHERE LOWER(username) = LOWER($1) OR (POSITION('#' IN $1) = 0 AND LOWER(split_part(username, '#', 1)) = LOWER($1))
+		ORDER BY id LIMIT 50`, strings.TrimSpace(name))
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	resetMu.Lock()
+	defer resetMu.Unlock()
+	for rows.Next() {
+		var id int
+		if rows.Scan(&id) == nil {
+			if _, ok := resetCodes[id]; ok {
+				return id, nil
+			}
+		}
+	}
+	return 0, sql.ErrNoRows
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -1857,40 +1889,46 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var creds Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	creds.Username = strings.TrimSpace(creds.Username)
 	if locked, secs := checkLoginLocked(creds.Username); locked {
-		http.Error(w, fmt.Sprintf("Çok fazla hatalı giriş denemesi. Lütfen %d saniye sonra tekrar deneyin.", secs), http.StatusTooManyRequests)
+		http.Error(w, Lf(r, "Çok fazla hatalı giriş denemesi. Lütfen %d saniye sonra tekrar deneyin.", secs), http.StatusTooManyRequests)
 		return
 	}
 
-	var userID int
-	var realUsername, storedHash string
-	err := db.QueryRow("SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER($1)", creds.Username).Scan(&userID, &realUsername, &storedHash)
+	var storedHash string
+	userID, realUsername, err := resolveHandle(db, creds.Username)
+	if errors.Is(err, errAmbiguousName) {
+		httpError(w, r, "Bu adla birden fazla hesap var. Etiketinle birlikte gir (ör. Ad#1234).", http.StatusConflict)
+		return
+	}
+	if err == nil {
+		err = db.QueryRow("SELECT password_hash FROM users WHERE id = $1", userID).Scan(&storedHash)
+	}
 	if err != nil {
 		_ = bcrypt.CompareHashAndPassword(dummyBcrypt, []byte(creds.Password))
 		recordLoginFailure(creds.Username)
-		http.Error(w, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
+		httpError(w, r, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
 		return
 	}
 
 	if err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(creds.Password)); err != nil {
 		recordLoginFailure(creds.Username)
-		http.Error(w, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
+		httpError(w, r, "Kullanıcı bulunamadı veya şifre yanlış", http.StatusUnauthorized)
 		return
 	}
 	resetLoginFailures(creds.Username)
 	if isUserBanned(userID) {
-		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		httpError(w, r, bannedAccountMessage, http.StatusForbidden)
 		return
 	}
 
 	tokenString, err := issueJWTForUser(userID, 7)
 	if err != nil {
-		http.Error(w, "Token oluşturulamadı", http.StatusInternalServerError)
+		httpError(w, r, "Token oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 
@@ -1998,13 +2036,13 @@ func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
 	p, err := fetchProfileByUserID(userID)
 	if err != nil {
-		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Profil bulunamadı", http.StatusNotFound)
 		return
 	}
 	if uid, err := strconv.Atoi(userID); err == nil {
@@ -2026,7 +2064,7 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -2037,19 +2075,40 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Country      string  `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz veri", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz veri", http.StatusBadRequest)
 		return
 	}
 
-	if trimmed := strings.TrimSpace(req.Username); len(trimmed) >= 2 && len(trimmed) <= 30 {
-		if isForbiddenUsername(trimmed) {
-			http.Error(w, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
-			return
-		}
-		_, err = db.Exec("UPDATE users SET username = $1 WHERE id = $2", trimmed, userID)
-		if err != nil {
-			http.Error(w, "Bu kullanıcı adı zaten kullanılıyor", http.StatusConflict)
-			return
+	if trimmed := strings.TrimSpace(req.Username); trimmed != "" {
+		// İstemci etiketi de gönderebilir; yalnızca ad kısmı değişir, etiket mümkünse korunur
+		newName, _ := splitHandle(trimmed)
+		newName = strings.TrimSpace(newName)
+		var current string
+		_ = db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&current)
+		currentName, currentTag := splitHandle(current)
+		if newName != currentName {
+			if !validDisplayName(newName) {
+				httpError(w, r, "Kullanıcı adı (2-30 karakter) ve şifre (en az 6 karakter) olmalıdır", http.StatusBadRequest)
+				return
+			}
+			if isForbiddenUsername(newName) {
+				httpError(w, r, "Kullanıcı adı topluluk kurallarına aykırı ifadeler içeremez", http.StatusBadRequest)
+				return
+			}
+			err = errAmbiguousName
+			if currentTag != "" {
+				_, err = db.Exec("UPDATE users SET username = $1 WHERE id = $2", makeHandle(newName, currentTag), userID)
+			}
+			if err != nil {
+				_, _, err = insertWithHandle(newName, func(candidate string) (int, error) {
+					_, updateErr := db.Exec("UPDATE users SET username = $1 WHERE id = $2", candidate, userID)
+					return 0, updateErr
+				})
+			}
+			if err != nil {
+				httpError(w, r, "Bu kullanıcı adı zaten kullanılıyor", http.StatusConflict)
+				return
+			}
 		}
 	}
 
@@ -2078,7 +2137,7 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	p, err := fetchProfileByUserID(userID)
 	if err != nil {
-		http.Error(w, "Profil okunamadı", http.StatusInternalServerError)
+		httpError(w, r, "Profil okunamadı", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -2096,19 +2155,19 @@ func handleClaimDaily(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
 	p, err := fetchProfileByUserID(userID)
 	if err != nil {
-		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Profil bulunamadı", http.StatusNotFound)
 		return
 	}
 
 	today := time.Now().UTC().Format("2006-01-02")
 	if p.LastDailyReward == today {
-		http.Error(w, "Bugünkü günlük ödül zaten alındı", http.StatusBadRequest)
+		httpError(w, r, "Bugünkü günlük ödül zaten alındı", http.StatusBadRequest)
 		return
 	}
 
@@ -2131,11 +2190,11 @@ func handleClaimDaily(w http.ResponseWriter, r *http.Request) {
 		WHERE user_id = $5 AND COALESCE(last_daily_reward, '') <> $4
 	`, rewardXP, rewardTokens, newStreak, today, userID)
 	if err != nil {
-		http.Error(w, "Ödül kaydedilemedi", http.StatusInternalServerError)
+		httpError(w, r, "Ödül kaydedilemedi", http.StatusInternalServerError)
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
-		http.Error(w, "Bugünkü günlük ödül zaten alındı", http.StatusBadRequest)
+		httpError(w, r, "Bugünkü günlük ödül zaten alındı", http.StatusBadRequest)
 		return
 	}
 
@@ -2160,7 +2219,7 @@ func handleOpenCase(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -2172,12 +2231,12 @@ func handleOpenCase(w http.ResponseWriter, r *http.Request) {
 		WHERE user_id = $2 AND cases > 0
 	`, reward, userID)
 	if err != nil {
-		http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+		httpError(w, r, "Sunucu hatası", http.StatusInternalServerError)
 		return
 	}
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		http.Error(w, "Açılacak kasa yok", http.StatusBadRequest)
+		httpError(w, r, "Açılacak kasa yok", http.StatusBadRequest)
 		return
 	}
 
@@ -2200,7 +2259,7 @@ func handleBuyDice(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -2208,19 +2267,19 @@ func handleBuyDice(w http.ResponseWriter, r *http.Request) {
 		Dice string `json:"dice"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	price, exists := dicePrices[req.Dice]
 	if !exists {
-		http.Error(w, "Geçersiz zar tipi", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz zar tipi", http.StatusBadRequest)
 		return
 	}
 
 	p, err := fetchProfileByUserID(userID)
 	if err != nil {
-		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Profil bulunamadı", http.StatusNotFound)
 		return
 	}
 
@@ -2236,7 +2295,7 @@ func handleBuyDice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p.Tokens < price {
-		http.Error(w, "Yetersiz jeton!", http.StatusBadRequest)
+		httpError(w, r, "Yetersiz jeton!", http.StatusBadRequest)
 		return
 	}
 
@@ -2249,11 +2308,11 @@ func handleBuyDice(w http.ResponseWriter, r *http.Request) {
 		WHERE user_id = $4 AND tokens >= $1
 	`, price, unlockedStr, req.Dice, userID)
 	if err != nil {
-		http.Error(w, "Satın alma başarısız", http.StatusInternalServerError)
+		httpError(w, r, "Satın alma başarısız", http.StatusInternalServerError)
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
-		http.Error(w, "Yetersiz jeton!", http.StatusBadRequest)
+		httpError(w, r, "Yetersiz jeton!", http.StatusBadRequest)
 		return
 	}
 
@@ -2287,7 +2346,7 @@ func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 	myID, _ := strconv.Atoi(uidStr)
@@ -2306,7 +2365,7 @@ func handleGetFriends(w http.ResponseWriter, r *http.Request) {
 		ORDER BY f.id DESC
 	`, myID)
 	if err != nil {
-		http.Error(w, "Arkadaş listesi alınamadı", http.StatusInternalServerError)
+		httpError(w, r, "Arkadaş listesi alınamadı", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -2379,7 +2438,7 @@ func handleFriendRequest(w http.ResponseWriter, r *http.Request) {
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 	myID, _ := strconv.Atoi(uidStr)
@@ -2388,29 +2447,32 @@ func handleFriendRequest(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	targetName := strings.TrimSpace(req.Username)
 	if targetName == "" {
-		http.Error(w, "Kullanıcı adı boş olamaz", http.StatusBadRequest)
+		httpError(w, r, "Kullanıcı adı boş olamaz", http.StatusBadRequest)
 		return
 	}
 
-	var targetID int
-	err = db.QueryRow("SELECT id FROM users WHERE LOWER(username) = LOWER($1)", targetName).Scan(&targetID)
+	targetID, _, err := resolveHandle(db, targetName)
+	if errors.Is(err, errAmbiguousName) {
+		httpError(w, r, "Bu adı kullanan birden fazla oyuncu var. Etiketiyle birlikte yaz (ör. Ad#1234).", http.StatusConflict)
+		return
+	}
 	if err != nil {
-		http.Error(w, "Bu isimde bir oyuncu bulunamadı!", http.StatusNotFound)
+		httpError(w, r, "Bu isimde bir oyuncu bulunamadı!", http.StatusNotFound)
 		return
 	}
 
 	if targetID == myID {
-		http.Error(w, "Kendinizi arkadaş olarak ekleyemezsiniz!", http.StatusBadRequest)
+		httpError(w, r, "Kendinizi arkadaş olarak ekleyemezsiniz!", http.StatusBadRequest)
 		return
 	}
 	if isBlockedEither(myID, targetID) {
-		http.Error(w, "Bu isimde bir oyuncu bulunamadı!", http.StatusNotFound)
+		httpError(w, r, "Bu isimde bir oyuncu bulunamadı!", http.StatusNotFound)
 		return
 	}
 
@@ -2424,21 +2486,21 @@ func handleFriendRequest(w http.ResponseWriter, r *http.Request) {
 
 	if err == nil {
 		if existingStatus == "accepted" {
-			http.Error(w, "Bu oyuncu zaten arkadaş listenizde!", http.StatusConflict)
+			httpError(w, r, "Bu oyuncu zaten arkadaş listenizde!", http.StatusConflict)
 			return
 		}
-		http.Error(w, "Zaten bekleyen bir arkadaşlık isteği var!", http.StatusConflict)
+		httpError(w, r, "Zaten bekleyen bir arkadaşlık isteği var!", http.StatusConflict)
 		return
 	}
 
 	_, err = db.Exec("INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'pending')", myID, targetID)
 	if err != nil {
-		http.Error(w, "Arkadaşlık isteği gönderilemedi", http.StatusInternalServerError)
+		httpError(w, r, "Arkadaşlık isteği gönderilemedi", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Arkadaşlık isteği gönderildi!"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": L(r, "Arkadaşlık isteği gönderildi!")})
 }
 
 // POST /friends/respond : Gelen arkadaşlık isteğini kabul eder, reddeder veya arkadaşı siler
@@ -2452,7 +2514,7 @@ func handleFriendRespond(w http.ResponseWriter, r *http.Request) {
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 	myID, _ := strconv.Atoi(uidStr)
@@ -2462,7 +2524,7 @@ func handleFriendRespond(w http.ResponseWriter, r *http.Request) {
 		Action       string `json:"action"` // "accept", "reject", "remove"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
@@ -2473,7 +2535,7 @@ func handleFriendRespond(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, "İşlem başarısız", http.StatusInternalServerError)
+		httpError(w, r, "İşlem başarısız", http.StatusInternalServerError)
 		return
 	}
 
@@ -2492,7 +2554,7 @@ func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 
 	uidStr, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 	myID, _ := strconv.Atoi(uidStr)
@@ -2503,7 +2565,7 @@ func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 		DismissID    int    `json:"dismissId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
@@ -2525,7 +2587,7 @@ func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !areFriends(myID, req.FriendUserID) || isBlockedEither(myID, req.FriendUserID) {
-		http.Error(w, "Yalnızca arkadaşlarınızı davet edebilirsiniz", http.StatusForbidden)
+		httpError(w, r, "Yalnızca arkadaşlarınızı davet edebilirsiniz", http.StatusForbidden)
 		return
 	}
 
@@ -2556,7 +2618,7 @@ func handleFriendInvite(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Oyun daveti gönderildi!"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": L(r, "Oyun daveti gönderildi!")})
 }
 
 func main() {
@@ -2773,7 +2835,7 @@ func applySecurityAndRateLimit(w http.ResponseWriter, r *http.Request, strict bo
 
 	ip := getClientIP(r)
 	if !generalLimiter.Allow(ip) || (strict && !strictLimiter.Allow(ip)) {
-		http.Error(w, "Çok fazla istek gönderdiniz. Lütfen kısa bir süre bekleyin.", http.StatusTooManyRequests)
+		httpError(w, r, "Çok fazla istek gönderdiniz. Lütfen kısa bir süre bekleyin.", http.StatusTooManyRequests)
 		return false
 	}
 	return true
@@ -2805,13 +2867,13 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 		AcceptedTerms bool   `json:"acceptedTerms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	deviceID := strings.TrimSpace(req.DeviceID)
 	if len(deviceID) < 8 || len(deviceID) > 120 {
-		http.Error(w, "Geçersiz cihaz kimliği", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz cihaz kimliği", http.StatusBadRequest)
 		return
 	}
 
@@ -2819,28 +2881,29 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 	var username string
 	err := db.QueryRow(`SELECT id, username FROM users WHERE guest_device_id = $1 LIMIT 1`, deviceID).Scan(&userID, &username)
 	if err == nil && isUserBanned(userID) {
-		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		httpError(w, r, bannedAccountMessage, http.StatusForbidden)
 		return
 	}
 	if err != nil {
 		if !req.AcceptedTerms {
-			http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+			httpError(w, r, termsRequiredMessage, http.StatusBadRequest)
 			return
 		}
-		for attempt := 0; attempt < 10; attempt++ {
-			candidate := fmt.Sprintf("Misafir_%d", secureRandInt(90000)+10000)
-			randomPass, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("guest-%s-%d", deviceID, time.Now().UnixNano())), BcryptCost)
-			err = db.QueryRow(`
+		randomPass, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("guest-%s-%d", deviceID, time.Now().UnixNano())), BcryptCost)
+		userID, username, err = insertWithHandle(L(r, "Misafir"), func(candidate string) (int, error) {
+			var id int
+			err := db.QueryRow(`
 				INSERT INTO users (username, password_hash, guest_device_id, is_guest, terms_accepted_at)
 				VALUES ($1, $2, $3, TRUE, NOW())
-				RETURNING id, username
-			`, candidate, string(randomPass), deviceID).Scan(&userID, &username)
-			if err == nil {
-				break
-			}
+				RETURNING id
+			`, candidate, string(randomPass), deviceID).Scan(&id)
+			return id, err
+		})
+		if err != nil {
+			userID = 0
 		}
 		if userID == 0 {
-			http.Error(w, "Misafir hesabı oluşturulamadı", http.StatusInternalServerError)
+			httpError(w, r, "Misafir hesabı oluşturulamadı", http.StatusInternalServerError)
 			return
 		}
 		_, _ = db.Exec(`
@@ -2852,7 +2915,7 @@ func handleGuestAuth(w http.ResponseWriter, r *http.Request) {
 
 	tokenString, err := issueJWTForUser(userID, 365)
 	if err != nil {
-		http.Error(w, "Token oluşturulamadı", http.StatusInternalServerError)
+		httpError(w, r, "Token oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 
@@ -2938,7 +3001,7 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 
 	audiences := splitCSV(os.Getenv("GOOGLE_CLIENT_ID"))
 	if len(audiences) == 0 {
-		http.Error(w, "Google ile giriş bu sunucuda etkin değil", http.StatusServiceUnavailable)
+		httpError(w, r, "Google ile giriş bu sunucuda etkin değil", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -2947,14 +3010,14 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 		AcceptedTerms bool   `json:"acceptedTerms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Credential == "" {
-		http.Error(w, "Google kimlik bilgisi gerekli", http.StatusBadRequest)
+		httpError(w, r, "Google kimlik bilgisi gerekli", http.StatusBadRequest)
 		return
 	}
 
 	identity, err := verifyGoogleIDToken(req.Credential, audiences)
 	if err != nil {
 		log.Println("Google token doğrulanamadı:", err)
-		http.Error(w, "Google oturumu doğrulanamadı", http.StatusUnauthorized)
+		httpError(w, r, "Google oturumu doğrulanamadı", http.StatusUnauthorized)
 		return
 	}
 	email := identity.Email
@@ -2965,23 +3028,23 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	var username string
 	err = db.QueryRow(`SELECT id, username FROM users WHERE google_id = $1 LIMIT 1`, googleID).Scan(&userID, &username)
 	if err == nil && isUserBanned(userID) {
-		http.Error(w, bannedAccountMessage, http.StatusForbidden)
+		httpError(w, r, bannedAccountMessage, http.StatusForbidden)
 		return
 	}
 
 	// /register e-postaları doğrulanmadığı için hesaplar e-postaya göre otomatik bağlanmaz
 	if err != nil {
 		if !req.AcceptedTerms {
-			http.Error(w, termsRequiredMessage, http.StatusBadRequest)
+			httpError(w, r, termsRequiredMessage, http.StatusBadRequest)
 			return
 		}
 		var emailTaken bool
 		if qErr := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1))`, email).Scan(&emailTaken); qErr != nil {
-			http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+			httpError(w, r, "Sunucu hatası", http.StatusInternalServerError)
 			return
 		}
 		if emailTaken {
-			http.Error(w, "Bu e-posta ile kayıtlı bir hesap var. Lütfen kullanıcı adı ve şifrenizle giriş yapın.", http.StatusConflict)
+			httpError(w, r, "Bu e-posta ile kayıtlı bir hesap var. Lütfen kullanıcı adı ve şifrenizle giriş yapın.", http.StatusConflict)
 			return
 		}
 	}
@@ -2989,14 +3052,14 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		userID, username, err = createProviderUser("google_id", googleID, email, displayName)
 		if err != nil {
-			http.Error(w, "Google hesabı oluşturulamadı", http.StatusInternalServerError)
+			httpError(w, r, "Google hesabı oluşturulamadı", http.StatusInternalServerError)
 			return
 		}
 	}
 
 	tokenString, err := issueJWTForUser(userID, 30)
 	if err != nil {
-		http.Error(w, "Token oluşturulamadı", http.StatusInternalServerError)
+		httpError(w, r, "Token oluşturulamadı", http.StatusInternalServerError)
 		return
 	}
 
@@ -3035,25 +3098,29 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	username := strings.TrimSpace(req.Username)
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if username == "" {
-		http.Error(w, "Kullanıcı adı giriniz", http.StatusBadRequest)
+		httpError(w, r, "Kullanıcı adı giriniz", http.StatusBadRequest)
 		return
 	}
 
 	resp := map[string]interface{}{
-		"message": "Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi.",
+		"message": L(r, "Bilgiler kayıtlı hesapla eşleşiyorsa doğrulama kodu e-postanıza gönderildi."),
 	}
 
 	var userID int
 	var dbEmail string
 	var isGuest bool
-	err := db.QueryRow(`SELECT id, COALESCE(email, ''), COALESCE(is_guest, FALSE) FROM users WHERE LOWER(username) = LOWER($1)`, username).
+	err := db.QueryRow(`
+		SELECT id, COALESCE(email, ''), COALESCE(is_guest, FALSE) FROM users
+		WHERE (LOWER(username) = LOWER($1) OR (POSITION('#' IN $1) = 0 AND LOWER(split_part(username, '#', 1)) = LOWER($1)))
+		  AND LOWER(COALESCE(email, '')) = LOWER($2)
+		ORDER BY id LIMIT 1`, username, email).
 		Scan(&userID, &dbEmail, &isGuest)
 
 	if err == nil && !isGuest && dbEmail != "" && strings.EqualFold(dbEmail, email) {
@@ -3069,9 +3136,11 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		if isDevelopment() {
 			resp["resetCode"] = code
 		}
+		// İstek bittikten sonra r okunmasın diye metinler önceden hazırlanır
+		subject := L(r, "Yat Dice şifre sıfırlama kodu")
+		body := Lf(r, "Yat Dice şifre sıfırlama kodunuz: %s\n\nKod 10 dakika geçerlidir. Bu isteği siz yapmadıysanız e-postayı yok sayın.", code)
 		go func() {
-			body := "Yat Dice şifre sıfırlama kodunuz: " + code + "\n\nKod 10 dakika geçerlidir. Bu isteği siz yapmadıysanız e-postayı yok sayın."
-			if err := sendEmail(dbEmail, "Yat Dice şifre sıfırlama kodu", body); err != nil {
+			if err := sendEmail(dbEmail, subject, body); err != nil {
 				log.Println("Şifre sıfırlama e-postası gönderilemedi:", err)
 			}
 		}()
@@ -3095,21 +3164,20 @@ func handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"newPassword"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	username := strings.TrimSpace(req.Username)
 	code := strings.TrimSpace(req.ResetCode)
 	if len(req.NewPassword) < 6 || len(req.NewPassword) > 72 {
-		http.Error(w, "Yeni şifre en az 6 karakter olmalıdır", http.StatusBadRequest)
+		httpError(w, r, "Yeni şifre en az 6 karakter olmalıdır", http.StatusBadRequest)
 		return
 	}
 
-	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE LOWER(username) = LOWER($1)`, username).Scan(&userID)
+	userID, err := userIDWithResetCode(username)
 	if err != nil {
-		http.Error(w, "Geçersiz kullanıcı veya sıfırlama kodu", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz kullanıcı veya sıfırlama kodu", http.StatusBadRequest)
 		return
 	}
 
@@ -3118,19 +3186,19 @@ func handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	if !exists || time.Now().After(entry.expiresAt) {
 		delete(resetCodes, userID)
 		resetMu.Unlock()
-		http.Error(w, "Sıfırlama kodunun süresi dolmuş veya geçersiz", http.StatusBadRequest)
+		httpError(w, r, "Sıfırlama kodunun süresi dolmuş veya geçersiz", http.StatusBadRequest)
 		return
 	}
 	entry.attempts++
 	if entry.attempts > 5 {
 		delete(resetCodes, userID)
 		resetMu.Unlock()
-		http.Error(w, "Çok fazla hatalı kod denemesi. Yeni kod talep edin.", http.StatusTooManyRequests)
+		httpError(w, r, "Çok fazla hatalı kod denemesi. Yeni kod talep edin.", http.StatusTooManyRequests)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(entry.code), []byte(code)) != 1 {
 		resetMu.Unlock()
-		http.Error(w, "Sıfırlama kodu hatalı!", http.StatusBadRequest)
+		httpError(w, r, "Sıfırlama kodu hatalı!", http.StatusBadRequest)
 		return
 	}
 	delete(resetCodes, userID)
@@ -3138,19 +3206,19 @@ func handleResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), BcryptCost)
 	if err != nil {
-		http.Error(w, "Sunucu hatası", http.StatusInternalServerError)
+		httpError(w, r, "Sunucu hatası", http.StatusInternalServerError)
 		return
 	}
 
 	// Şifre değişince eski oturumlar geçersiz olur
 	if _, err := db.Exec(`UPDATE users SET password_hash = $1, tokens_valid_after = date_trunc('second', NOW()) WHERE id = $2`, string(hashed), userID); err != nil {
-		http.Error(w, "Şifre güncellenemedi", http.StatusInternalServerError)
+		httpError(w, r, "Şifre güncellenemedi", http.StatusInternalServerError)
 		return
 	}
 
 	resetLoginFailures(username)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Şifreniz başarıyla güncellendi! Şimdi giriş yapabilirsiniz."})
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": L(r, "Şifreniz başarıyla güncellendi! Şimdi giriş yapabilirsiniz.")})
 }
 
 // ─── 5. ARKADAŞ ÇEVRİMİÇİ (ONLINE / OYUNDA) DURUM TAKİBİ ─────────────────────
@@ -3249,7 +3317,7 @@ func handleClaimQuest(w http.ResponseWriter, r *http.Request) {
 
 	userID, err := getUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "Yetkisiz", http.StatusUnauthorized)
+		httpError(w, r, "Yetkisiz", http.StatusUnauthorized)
 		return
 	}
 
@@ -3257,31 +3325,31 @@ func handleClaimQuest(w http.ResponseWriter, r *http.Request) {
 		QuestID string `json:"questId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Geçersiz istek", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz istek", http.StatusBadRequest)
 		return
 	}
 
 	qDef, exists := questDefinitions[req.QuestID]
 	if !exists {
-		http.Error(w, "Geçersiz görev", http.StatusBadRequest)
+		httpError(w, r, "Geçersiz görev", http.StatusBadRequest)
 		return
 	}
 
 	p, err := fetchProfileByUserID(userID)
 	if err != nil {
-		http.Error(w, "Profil bulunamadı", http.StatusNotFound)
+		httpError(w, r, "Profil bulunamadı", http.StatusNotFound)
 		return
 	}
 
 	for _, c := range p.ClaimedQuests {
 		if c == req.QuestID {
-			http.Error(w, "Bu görev ödülü zaten alındı", http.StatusConflict)
+			httpError(w, r, "Bu görev ödülü zaten alındı", http.StatusConflict)
 			return
 		}
 	}
 
 	if !qDef.check(p) {
-		http.Error(w, "Görev şartları henüz tamamlanmadı", http.StatusBadRequest)
+		httpError(w, r, "Görev şartları henüz tamamlanmadı", http.StatusBadRequest)
 		return
 	}
 
@@ -3297,7 +3365,7 @@ func handleClaimQuest(w http.ResponseWriter, r *http.Request) {
 		WHERE user_id = $5
 	`, qDef.xp, qDef.tokens, qDef.cases, claimedCSV, userID)
 	if err != nil {
-		http.Error(w, "Görev ödülü kaydedilemedi", http.StatusInternalServerError)
+		httpError(w, r, "Görev ödülü kaydedilemedi", http.StatusInternalServerError)
 		return
 	}
 
@@ -3343,7 +3411,7 @@ func handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		LIMIT 20
 	`)
 	if err != nil {
-		http.Error(w, "Liderlik tablosu alınamadı", http.StatusInternalServerError)
+		httpError(w, r, "Liderlik tablosu alınamadı", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
